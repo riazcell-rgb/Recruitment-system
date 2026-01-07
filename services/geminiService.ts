@@ -2,10 +2,10 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { InterviewEvaluation, ChatMessage, Candidate, JobTemplate, MatchAnalysis } from "../types";
 
-const genAI = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-
+// The API key must be obtained exclusively from process.env.API_KEY.
+// Always use gemini-3-flash-preview for general chat tasks.
 export const startInterviewChat = (systemInstruction: string, history: { role: 'user' | 'model', parts: [{ text: string }] }[] = []) => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   return ai.chats.create({
     model: 'gemini-3-flash-preview',
     config: {
@@ -16,10 +16,11 @@ export const startInterviewChat = (systemInstruction: string, history: { role: '
   });
 };
 
+// Use gemini-3-pro-preview for tasks requiring advanced reasoning like evaluation.
 export const evaluateInterview = async (transcript: string): Promise<InterviewEvaluation> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-3-pro-preview',
     contents: `Evaluate this interview transcript and provide a structured assessment:\n\n${transcript}`,
     config: {
       responseMimeType: "application/json",
@@ -42,8 +43,9 @@ export const evaluateInterview = async (transcript: string): Promise<InterviewEv
   return JSON.parse(response.text || '{}');
 };
 
+// Use gemini-3-pro-preview for high-quality analysis of candidate fit.
 export const calculateMatchScore = async (candidate: Candidate, template: JobTemplate): Promise<MatchAnalysis> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const prompt = `
     Compare this candidate profile against the job requirements.
     
@@ -60,7 +62,7 @@ export const calculateMatchScore = async (candidate: Candidate, template: JobTem
   `;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
+    model: 'gemini-3-pro-preview',
     contents: prompt,
     config: {
       responseMimeType: "application/json",

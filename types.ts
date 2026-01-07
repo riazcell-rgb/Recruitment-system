@@ -40,18 +40,27 @@ export interface MatchAnalysis {
   requirementAnalysis?: RequirementMatch[];
 }
 
+export interface ManagerAssessment {
+  score: number;
+  comments: string;
+  recommendation: 'HIRE' | 'REJECT' | 'FOLLOW_UP';
+}
+
 export interface Candidate {
   id: string;
   name: string;
   email: string;
   role: string;
   status: 'PENDING' | 'INTERVIEWING' | 'COMPLETED' | 'REJECTED' | 'SHORTLISTED';
-  score?: number; // Interview score
+  score?: number; // Interview score (AI)
   matchScore?: number; // Algorithm matching score
   matchAnalysis?: MatchAnalysis;
   summary?: string;
   interviewDate: string;
   profile?: CandidateProfile;
+  preparationMessage?: string;
+  transcript?: string;
+  managerAssessment?: ManagerAssessment;
 }
 
 export interface JobTemplate {
@@ -60,7 +69,7 @@ export interface JobTemplate {
   description: string;
   systemPrompt: string;
   questions: string[];
-  requirements: string[]; // Added requirements for better matching
+  requirements: string[];
 }
 
 export interface ChatMessage {
