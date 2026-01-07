@@ -1,0 +1,8 @@
+{
+  "name": "HireStream AI Recruiting Agent",
+  "description": "An end-to-end AI-powered recruitment platform that automates candidate screening through intelligent sequential interviews, evaluation reports, and seamless data synchronization.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
