@@ -5,7 +5,7 @@ import {
   Send, Star, FileCheck, ThumbsUp, ThumbsDown, MessageSquare, Target, ChevronRight, 
   ShieldCheck, Radio, Cpu, ArrowUpDown, ArrowUp, ArrowDown, AlertCircle, BarChart3,
   Calendar, Video, FileText, Download, Play, Pause, Volume2, Maximize, UserCheck, 
-  Settings2, MoreHorizontal, History
+  Settings2, MoreHorizontal, History, Eye, Plus, Trash2, UserPlus, Clock4, ClipboardList
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { INITIAL_CANDIDATES } from '../constants';
@@ -23,13 +23,16 @@ const ManagerPanel: React.FC = () => {
   const [activeView, setActiveView] = useState<'pipeline' | 'reports'>('pipeline');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
-  const [detailTab, setDetailTab] = useState<'assessment' | 'recording' | 'cv'>('assessment');
-  const [isGrading, setIsGrading] = useState(false);
+  const [detailTab, setDetailTab] = useState<'assessment' | 'logistics' | 'recording' | 'cv'>('assessment');
   const [sortConfig, setSortConfig] = useState<SortConfig>(null);
   
-  // Edit State
+  // Recording State
+  const [isPlaying, setIsPlaying] = useState(false);
+  
+  // Logistics State
   const [editDate, setEditDate] = useState('');
-  const [isEditingDate, setIsEditingDate] = useState(false);
+  const [editTime, setEditTime] = useState('');
+  const [newBoardMember, setNewBoardMember] = useState('');
 
   const [assessment, setAssessment] = useState<Partial<ManagerAssessment>>({
     score: 80,
@@ -47,6 +50,24 @@ const ManagerPanel: React.FC = () => {
       localStorage.setItem(CANDIDATE_DB_KEY, JSON.stringify(INITIAL_CANDIDATES));
     }
   }, []);
+
+  // Sync assessment form with selected candidate
+  useEffect(() => {
+    if (selectedCandidate) {
+      if (selectedCandidate.managerAssessment) {
+        setAssessment(selectedCandidate.managerAssessment);
+      } else {
+        setAssessment({
+          score: 80,
+          comments: '',
+          recommendation: 'HIRE'
+        });
+      }
+      setEditDate(selectedCandidate.interviewDate || '');
+      setEditTime(selectedCandidate.interviewTime || '09:00');
+      setIsPlaying(false);
+    }
+  }, [selectedCandidate]);
 
   const handleSort = (key: keyof Candidate) => {
     let direction: 'asc' | 'desc' = 'asc';
@@ -79,11 +100,43 @@ const ManagerPanel: React.FC = () => {
     setSelectedCandidate(updated);
   };
 
-  const handleSaveDate = () => {
+  const handleSaveLogistics = () => {
     if (!selectedCandidate) return;
-    const updated = { ...selectedCandidate, interviewDate: editDate };
+    const updated = { 
+      ...selectedCandidate, 
+      interviewDate: editDate,
+      interviewTime: editTime
+    };
     updateCandidate(updated);
-    setIsEditingDate(false);
+  };
+
+  const handleAddBoardMember = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCandidate || !newBoardMember.trim()) return;
+    const currentBoard = selectedCandidate.boardMembers || [];
+    if (currentBoard.includes(newBoardMember.trim())) return;
+    
+    const updated = {
+      ...selectedCandidate,
+      boardMembers: [...currentBoard, newBoardMember.trim()]
+    };
+    updateCandidate(updated);
+    setNewBoardMember('');
+  };
+
+  const handleRemoveBoardMember = (member: string) => {
+    if (!selectedCandidate) return;
+    const updated = {
+      ...selectedCandidate,
+      boardMembers: (selectedCandidate.boardMembers || []).filter(m => m !== member)
+    };
+    updateCandidate(updated);
+  };
+
+  const toggleCVReviewed = () => {
+    if (!selectedCandidate) return;
+    const updated = { ...selectedCandidate, cvReviewed: !selectedCandidate.cvReviewed };
+    updateCandidate(updated);
   };
 
   const submitGrading = () => {
@@ -103,7 +156,6 @@ const ManagerPanel: React.FC = () => {
       managerAssessment: assessment as ManagerAssessment
     };
     updateCandidate(updated);
-    setIsGrading(false);
     setGradingErrors({});
   };
 
@@ -195,7 +247,6 @@ const ManagerPanel: React.FC = () => {
                         <button 
                           onClick={() => {
                             setSelectedCandidate(candidate);
-                            setEditDate(candidate.interviewDate);
                             setDetailTab('assessment');
                           }} 
                           className="p-3 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-2xl transition-all"
@@ -227,12 +278,13 @@ const ManagerPanel: React.FC = () => {
                   </div>
                 </div>
               </div>
-              <button onClick={() => { setSelectedCandidate(null); setIsGrading(false); }} className="p-4 bg-white border border-slate-200 rounded-[1.5rem] text-slate-400 hover:text-indigo-600 transition-all shadow-sm"><X className="w-6 h-6" /></button>
+              <button onClick={() => { setSelectedCandidate(null); }} className="p-4 bg-white border border-slate-200 rounded-[1.5rem] text-slate-400 hover:text-indigo-600 transition-all shadow-sm"><X className="w-6 h-6" /></button>
             </div>
 
             <div className="flex border-b border-slate-100 bg-white px-8">
               {[
                 { id: 'assessment', label: 'Assessment', icon: Brain },
+                { id: 'logistics', label: 'Logistics & Board', icon: ClipboardList },
                 { id: 'recording', label: 'Interview Recording', icon: Video },
                 { id: 'cv', label: 'CV & Profile', icon: FileText }
               ].map(tab => (
@@ -253,37 +305,12 @@ const ManagerPanel: React.FC = () => {
             <div className="p-10 max-h-[60vh] overflow-y-auto">
               {detailTab === 'assessment' && (
                 <div className="space-y-10 animate-in fade-in slide-in-from-left-4 duration-500">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <ScoreCard label="AI Match Score" value={selectedCandidate.matchScore || 0} icon={Target} color="indigo" />
                     <ScoreCard label="Interview Performance" value={selectedCandidate.score || 0} icon={Brain} color="emerald" />
-                    <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Schedule</span>
-                        <Calendar className="w-4 h-4 text-slate-400" />
-                      </div>
-                      {isEditingDate ? (
-                        <div className="space-y-3">
-                          <input 
-                            type="date" 
-                            value={editDate} 
-                            onChange={(e) => setEditDate(e.target.value)}
-                            className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold"
-                          />
-                          <div className="flex gap-2">
-                            <button onClick={handleSaveDate} className="flex-1 bg-indigo-600 text-white py-2 rounded-xl text-[10px] font-black uppercase">Save</button>
-                            <button onClick={() => setIsEditingDate(false)} className="px-4 bg-slate-200 text-slate-600 py-2 rounded-xl text-[10px] font-black uppercase">Cancel</button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col">
-                          <span className="text-lg font-black text-slate-900">{selectedCandidate.interviewDate}</span>
-                          <button onClick={() => setIsEditingDate(true)} className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mt-2 hover:underline text-left">Reschedule Interview</button>
-                        </div>
-                      )}
-                    </div>
                   </div>
 
-                  {selectedCandidate.status === 'COMPLETED' ? (
+                  {selectedCandidate.status !== 'PENDING' && selectedCandidate.status !== 'INTERVIEWING' ? (
                     <section className="space-y-6">
                       <div className="flex items-center justify-between">
                          <h4 className="font-black text-slate-900 uppercase text-sm tracking-widest">Final Manager Grade</h4>
@@ -310,7 +337,7 @@ const ManagerPanel: React.FC = () => {
                                     onClick={() => setAssessment({...assessment, recommendation: rec as any})}
                                     className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
                                       assessment.recommendation === rec 
-                                      ? (rec === 'HIRE' ? 'bg-emerald-500 text-white' : rec === 'REJECT' ? 'bg-red-500 text-white' : 'bg-indigo-500 text-white')
+                                      ? (rec === 'HIRE' ? 'bg-emerald-500 text-white shadow-lg' : rec === 'REJECT' ? 'bg-red-500 text-white shadow-lg' : 'bg-indigo-500 text-white shadow-lg')
                                       : 'text-slate-400 hover:bg-slate-50'
                                     }`}
                                   >
@@ -330,16 +357,114 @@ const ManagerPanel: React.FC = () => {
                           />
                           {gradingErrors.comments && <p className="text-[10px] text-red-500 font-bold mt-1 uppercase">{gradingErrors.comments}</p>}
                         </div>
-                        <button onClick={submitGrading} className="w-full py-5 bg-slate-900 text-white rounded-[1.5rem] font-black text-xs uppercase tracking-[0.2em] shadow-xl hover:bg-slate-800 transition-all active:scale-[0.98]">Submit Evaluation Report</button>
+                        <button onClick={submitGrading} className="w-full py-5 bg-slate-900 text-white rounded-[1.5rem] font-black text-xs uppercase tracking-[0.2em] shadow-xl hover:bg-slate-800 transition-all active:scale-[0.98]">Update Evaluation Report</button>
                       </div>
                     </section>
                   ) : (
                     <div className="bg-indigo-50 p-10 rounded-[2.5rem] border border-indigo-100 text-center">
                       <History className="w-12 h-12 text-indigo-300 mx-auto mb-4" />
-                      <h4 className="text-lg font-black text-indigo-900 uppercase tracking-tight">Interview Pending</h4>
-                      <p className="text-sm text-indigo-600/80 font-medium max-w-xs mx-auto mt-2">Assessment tools will be available once the candidate completes their AI-led session.</p>
+                      <h4 className="text-lg font-black text-indigo-900 uppercase tracking-tight">Interview In Progress</h4>
+                      <p className="text-sm text-indigo-600/80 font-medium max-w-xs mx-auto mt-2">Assessment tools will be fully available once the candidate completes their AI-led session.</p>
                     </div>
                   )}
+                </div>
+              )}
+
+              {detailTab === 'logistics' && (
+                <div className="space-y-10 animate-in fade-in slide-in-from-right-4 duration-500">
+                  {/* Interview Schedule Section */}
+                  <section>
+                    <div className="flex items-center gap-3 mb-6">
+                      <Calendar className="w-6 h-6 text-indigo-600" />
+                      <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight">Interview Schedule</h4>
+                    </div>
+                    <div className="bg-slate-50 p-8 rounded-[2.5rem] border border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-8">
+                       <div className="space-y-3">
+                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                           <Calendar className="w-3.5 h-3.5" /> Interview Date
+                         </label>
+                         <input 
+                           type="date" 
+                           value={editDate} 
+                           onChange={(e) => {
+                             setEditDate(e.target.value);
+                             // Auto-save on change for better UX
+                             const updated = { ...selectedCandidate!, interviewDate: e.target.value };
+                             updateCandidate(updated);
+                           }}
+                           className="w-full bg-white border border-slate-200 rounded-2xl px-5 py-4 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                         />
+                       </div>
+                       <div className="space-y-3">
+                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                           <Clock4 className="w-3.5 h-3.5" /> Interview Time
+                         </label>
+                         <input 
+                           type="time" 
+                           value={editTime} 
+                           onChange={(e) => {
+                             setEditTime(e.target.value);
+                             const updated = { ...selectedCandidate!, interviewTime: e.target.value };
+                             updateCandidate(updated);
+                           }}
+                           className="w-full bg-white border border-slate-200 rounded-2xl px-5 py-4 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                         />
+                       </div>
+                    </div>
+                  </section>
+
+                  {/* Interview Board Management Section */}
+                  <section>
+                    <div className="flex items-center gap-3 mb-6">
+                      <Users className="w-6 h-6 text-indigo-600" />
+                      <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight">Interview Board</h4>
+                    </div>
+                    <div className="bg-white border border-slate-200 rounded-[2.5rem] p-8 space-y-8 shadow-sm">
+                      <form onSubmit={handleAddBoardMember} className="flex gap-4">
+                        <div className="flex-1 relative">
+                          <UserPlus className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                          <input 
+                            type="text" 
+                            placeholder="Add member (e.g. John Doe, Lead Engineer)"
+                            value={newBoardMember}
+                            onChange={(e) => setNewBoardMember(e.target.value)}
+                            className="w-full pl-12 pr-4 py-4 bg-slate-50 border-none rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                          />
+                        </div>
+                        <button 
+                          type="submit"
+                          className="bg-slate-900 text-white px-8 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2"
+                        >
+                          <Plus className="w-4 h-4" /> Add Member
+                        </button>
+                      </form>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {(selectedCandidate.boardMembers || []).length === 0 ? (
+                          <div className="md:col-span-2 py-10 text-center border-2 border-dashed border-slate-100 rounded-[2rem]">
+                            <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">No board members assigned yet</p>
+                          </div>
+                        ) : (
+                          (selectedCandidate.boardMembers || []).map((member) => (
+                            <div key={member} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 group">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-indigo-600 shadow-sm font-black text-xs">
+                                  {member.split(' ').map(n => n[0]).join('')}
+                                </div>
+                                <span className="text-sm font-bold text-slate-900">{member}</span>
+                              </div>
+                              <button 
+                                onClick={() => handleRemoveBoardMember(member)}
+                                className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </section>
                 </div>
               )}
 
@@ -351,24 +476,27 @@ const ManagerPanel: React.FC = () => {
                         <div className="aspect-video bg-slate-950 rounded-[2.5rem] relative overflow-hidden group border-8 border-slate-900 shadow-2xl">
                           <img 
                             src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=800" 
-                            className="w-full h-full object-cover opacity-60 grayscale" 
+                            className={`w-full h-full object-cover transition-opacity duration-500 ${isPlaying ? 'opacity-80 grayscale-0' : 'opacity-60 grayscale'}`} 
                             alt="Recording Preview"
                           />
                           <div className="absolute inset-0 flex items-center justify-center">
-                             <div className="w-20 h-20 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/30 cursor-pointer hover:scale-110 transition-transform">
-                                <Play className="w-8 h-8 fill-current" />
-                             </div>
+                             <button 
+                               onClick={() => setIsPlaying(!isPlaying)}
+                               className="w-20 h-20 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/30 cursor-pointer hover:scale-110 transition-transform"
+                             >
+                                {isPlaying ? <Pause className="w-8 h-8 fill-current" /> : <Play className="w-8 h-8 fill-current ml-1" />}
+                             </button>
                           </div>
                           <div className="absolute bottom-0 left-0 w-full p-6 bg-gradient-to-t from-black to-transparent">
                              <div className="flex items-center justify-between text-white mb-3">
-                                <span className="text-[10px] font-black uppercase tracking-widest">04:12 / 12:45</span>
+                                <span className="text-[10px] font-black uppercase tracking-widest">{isPlaying ? '05:42' : '04:12'} / 12:45</span>
                                 <div className="flex gap-4">
                                    <Volume2 className="w-4 h-4" />
                                    <Maximize className="w-4 h-4" />
                                 </div>
                              </div>
                              <div className="h-1.5 w-full bg-white/20 rounded-full overflow-hidden">
-                                <div className="h-full bg-indigo-500 rounded-full" style={{ width: '35%' }} />
+                                <div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{ width: isPlaying ? '45%' : '35%' }} />
                              </div>
                           </div>
                         </div>
@@ -377,8 +505,9 @@ const ManagerPanel: React.FC = () => {
                            <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Metadata</h5>
                            <div className="space-y-4">
                               <MetaItem label="Connection Quality" value="Excellent (HD)" />
-                              <MetaItem label="Agent Intelligence" value="Alex v2.4" />
+                              <MetaItem label="Agent Intelligence" value="Alex v2.5" />
                               <MetaItem label="Sentiment Analysis" value="Positive/Professional" />
+                              <MetaItem label="Duration" value="12:45" />
                            </div>
                         </div>
                       </div>
@@ -386,9 +515,11 @@ const ManagerPanel: React.FC = () => {
                       <div className="lg:col-span-7 flex flex-col h-[500px] bg-white border border-slate-200 rounded-[2.5rem] shadow-sm overflow-hidden">
                         <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
                            <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Full Session Transcript</span>
-                           <button className="flex items-center gap-2 text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline">
-                              <Download className="w-3.5 h-3.5" /> Export PDF
-                           </button>
+                           <div className="flex gap-3">
+                              <button className="flex items-center gap-2 text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline">
+                                 <Download className="w-3.5 h-3.5" /> Export PDF
+                              </button>
+                           </div>
                         </div>
                         <div className="flex-1 overflow-y-auto p-8 space-y-6">
                            {selectedCandidate.transcript.split('\n\n').map((block, i) => {
@@ -408,9 +539,12 @@ const ManagerPanel: React.FC = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="py-20 text-center">
-                       <Video className="w-12 h-12 text-slate-200 mx-auto mb-4" />
+                    <div className="py-20 text-center flex flex-col items-center">
+                       <div className="w-20 h-20 bg-slate-100 rounded-[2rem] flex items-center justify-center text-slate-300 mb-6">
+                          <Video className="w-10 h-10" />
+                       </div>
                        <h4 className="font-black text-slate-300 uppercase tracking-widest">No recordings available yet</h4>
+                       <p className="text-xs text-slate-400 font-medium max-w-xs mt-2">Recordings and transcripts appear once the candidate completes their AI interview.</p>
                     </div>
                   )}
                 </div>
@@ -431,14 +565,15 @@ const ManagerPanel: React.FC = () => {
                                   <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Added {selectedCandidate.interviewDate}</p>
                                </div>
                             </div>
-                            <div className="p-4 bg-white/5 rounded-2xl border border-white/10 flex items-center gap-4 opacity-50">
-                               <div className="w-10 h-10 bg-slate-700 rounded-xl flex items-center justify-center"><FileText className="w-5 h-5 text-white" /></div>
-                               <div>
-                                  <p className="text-xs font-black">Portfolio_2024.zip</p>
-                                  <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Not Provided</p>
-                               </div>
-                            </div>
                          </div>
+                         <button 
+                           onClick={toggleCVReviewed}
+                           className={`w-full mt-10 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
+                             selectedCandidate.cvReviewed ? 'bg-emerald-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'
+                           }`}
+                         >
+                           {selectedCandidate.cvReviewed ? <><CheckCircle className="w-4 h-4" /> Marked as Reviewed</> : <><Eye className="w-4 h-4" /> Mark as Reviewed</>}
+                         </button>
                       </div>
                       <div className="bg-slate-50 p-8 rounded-[2rem] border border-slate-100">
                          <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">Education History</h5>
@@ -528,7 +663,7 @@ const ScoreCard: React.FC<{ label: string; value: number; icon: any; color: 'ind
 const MetaItem: React.FC<{ label: string; value: string }> = ({ label, value }) => (
   <div className="flex justify-between items-center text-[10px] font-black">
     <span className="text-slate-400 uppercase tracking-widest">{label}</span>
-    <span className="text-slate-900 uppercase tracking-widest">{value}</span>
+    <span className="text-slate-900 uppercase tracking-widest text-right">{value}</span>
   </div>
 );
 

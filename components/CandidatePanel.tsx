@@ -5,15 +5,17 @@ import {
   Target, Cpu, Download, AlertCircle, Radio, RotateCcw, Disc, StopCircle, 
   Briefcase, ChevronRight, UserCircle2, Headphones, Sparkles, History, Info, 
   User, MessageSquare, PlayCircle, ShieldCheck, LayoutGrid, Search, MapPin, 
-  Clock as ClockIcon, Zap, ArrowRight, Bookmark, Building2, Pencil, Save, Plus, X as XIcon, GraduationCap, BriefcaseIcon, FileText, Settings, Heart, Upload, File
+  Clock as ClockIcon, Zap, ArrowRight, Bookmark, Building2, Pencil, Save, Plus, X as XIcon, GraduationCap, BriefcaseIcon, FileText, Settings, Heart, Upload, File,
+  TrendingUp, AlertTriangle, Lightbulb, Clock, Bell, Trash2
 } from 'lucide-react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { evaluateInterview } from '../services/geminiService';
 import { JOB_TEMPLATES } from '../constants';
-import { ChatMessage, InterviewEvaluation, User as UserType, Candidate, JobTemplate, CandidateProfile } from '../types';
+import { ChatMessage, InterviewEvaluation, User as UserType, Candidate, JobTemplate, CandidateProfile, JobAlertSubscription } from '../types';
 
 const STORAGE_KEY = 'hirestream_interview_state';
 const CANDIDATE_DB_KEY = 'hirestream_candidates_db';
+const ALERTS_STORAGE_KEY = 'hirestream_job_alerts';
 
 // --- Base64 & Audio Helpers ---
 function encode(bytes: Uint8Array) {
@@ -75,6 +77,13 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [hasResumeData, setHasResumeData] = useState(false);
   
+  // Timer State
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  
+  // Job Alerts State
+  const [subscription, setSubscription] = useState<JobAlertSubscription | null>(null);
+  const [alertKeyword, setAlertKeyword] = useState('');
+
   // Feedback State
   const [feedbackRating, setFeedbackRating] = useState(0);
   const [feedbackComments, setFeedbackComments] = useState('');
@@ -109,9 +118,27 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Timer Effect
+  useEffect(() => {
+    let interval: number;
+    if (isStarted && !isFinished) {
+      interval = window.setInterval(() => {
+        setElapsedSeconds(prev => prev + 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isStarted, isFinished]);
+
+  const formatTime = (totalSeconds: number) => {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
   // Load persistence and candidate data
   useEffect(() => {
     loadCandidateData();
+    loadSubscription();
     
     // Restore interview state from localStorage
     const savedState = localStorage.getItem(STORAGE_KEY);
@@ -119,6 +146,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
       try {
         const state = JSON.parse(savedState);
         if (state.messages) setMessages(state.messages);
+        if (state.elapsedSeconds) setElapsedSeconds(state.elapsedSeconds);
         // We always start at portal on initial load to give the user a choice, 
         // unless they click "Resume"
         if (state.activeInterview) {
@@ -146,7 +174,8 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
       activeInterview,
       isFinished,
       evaluation,
-      feedbackSubmitted
+      feedbackSubmitted,
+      elapsedSeconds
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave));
     
@@ -156,7 +185,75 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
     } else {
       setHasResumeData(false);
     }
-  }, [messages, view, activeTab, activeInterview, isFinished, evaluation, feedbackSubmitted]);
+  }, [messages, view, activeTab, activeInterview, isFinished, evaluation, feedbackSubmitted, elapsedSeconds]);
+
+  const loadSubscription = () => {
+    const saved = localStorage.getItem(ALERTS_STORAGE_KEY);
+    if (saved) {
+      const all: JobAlertSubscription[] = JSON.parse(saved);
+      const sub = all.find(s => s.candidateEmail === user.email);
+      setSubscription(sub || null);
+    }
+  };
+
+  const handleToggleAlerts = () => {
+    if (!subscription) {
+      const newSub: JobAlertSubscription = {
+        id: `sub-${Date.now()}`,
+        candidateEmail: user.email,
+        candidateName: user.name,
+        keywords: profileForm.skills.slice(0, 3), // Default to some skills
+        active: true,
+        createdAt: new Date().toISOString()
+      };
+      saveSubscription(newSub);
+    } else {
+      saveSubscription({ ...subscription, active: !subscription.active });
+    }
+  };
+
+  const handleAddAlertKeyword = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!alertKeyword.trim()) return;
+    
+    const kw = alertKeyword.trim();
+    if (subscription) {
+      if (!subscription.keywords.includes(kw)) {
+        saveSubscription({ ...subscription, keywords: [...subscription.keywords, kw] });
+      }
+    } else {
+       const newSub: JobAlertSubscription = {
+        id: `sub-${Date.now()}`,
+        candidateEmail: user.email,
+        candidateName: user.name,
+        keywords: [kw],
+        active: true,
+        createdAt: new Date().toISOString()
+      };
+      saveSubscription(newSub);
+    }
+    setAlertKeyword('');
+  };
+
+  const handleRemoveAlertKeyword = (kw: string) => {
+    if (!subscription) return;
+    saveSubscription({ ...subscription, keywords: subscription.keywords.filter(k => k !== kw) });
+  };
+
+  const saveSubscription = (sub: JobAlertSubscription) => {
+    const saved = localStorage.getItem(ALERTS_STORAGE_KEY);
+    let all: JobAlertSubscription[] = saved ? JSON.parse(saved) : [];
+    
+    const index = all.findIndex(s => s.candidateEmail === user.email);
+    if (index >= 0) {
+      all[index] = sub;
+    } else {
+      all.push(sub);
+    }
+    
+    localStorage.setItem(ALERTS_STORAGE_KEY, JSON.stringify(all));
+    setSubscription(sub);
+  };
 
   const loadCandidateData = () => {
     const db = localStorage.getItem(CANDIDATE_DB_KEY);
@@ -192,19 +289,38 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   }, [isStarted, stream, cameraActive, view]);
 
   const initStream = async () => {
+    // Explicit availability check
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert("Your browser does not support media access. Please try a modern browser like Chrome or Edge.");
+      return null;
+    }
+
     try {
       // If there's an existing stream, try to reuse it or stop it
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
+      
+      // Use more flexible constraints to ensure success across various hardware
       const s = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: 1280, height: 720 }, 
+        video: { 
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          facingMode: "user"
+        }, 
         audio: true 
       });
       setStream(s);
       return s;
-    } catch (err) {
-      console.error("Media access denied", err);
+    } catch (err: any) {
+      console.error("Media access error:", err);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        alert("Camera and microphone access was denied. Please check your browser's site settings and click the camera icon in the address bar to allow access.");
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        alert("No camera or microphone found. Please connect your media devices and try again.");
+      } else {
+        alert(`Media access error: ${err.message}. Please check your browser permissions.`);
+      }
       return null;
     }
   };
@@ -293,10 +409,8 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
 
   const startInterview = async (interview: Candidate, isResume: boolean = false) => {
     const s = await initStream();
-    if (!s) {
-      alert("Please allow camera and microphone access to start.");
-      return;
-    }
+    if (!s) return; // Error handled inside initStream
+
     const template = JOB_TEMPLATES.find(t => t.title === interview.role) || JOB_TEMPLATES[0];
     setView('interview');
     setIsStarted(true);
@@ -426,25 +540,30 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
 
   if (view === 'interview') {
     if (isFinished) return (
-      <div className="max-w-4xl mx-auto py-12 px-6 animate-in fade-in duration-700">
-        <div className="bg-white p-12 rounded-[3rem] border border-slate-200 text-center shadow-2xl relative overflow-hidden">
+      <div className="max-w-5xl mx-auto py-12 px-6 animate-in fade-in duration-700">
+        <div className="bg-white p-12 rounded-[3.5rem] border border-slate-200 text-center shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 to-emerald-500" />
-          <CheckCircle2 className="w-20 h-20 text-emerald-500 mx-auto mb-6" />
-          <h2 className="text-3xl font-black text-slate-900 mb-4 tracking-tight">Interview Successfully Completed</h2>
-          <p className="text-slate-500 mb-10 font-medium max-w-lg mx-auto leading-relaxed">
-            Your conversation has been securely processed. Our AI analysis is ready, and your hiring manager will be notified immediately.
-          </p>
+          <div className="flex flex-col items-center mb-10">
+            <div className="w-20 h-20 bg-emerald-100 rounded-[2rem] flex items-center justify-center text-emerald-600 mb-6 shadow-lg shadow-emerald-500/10">
+               <CheckCircle2 className="w-12 h-12" />
+            </div>
+            <h2 className="text-3xl font-black text-slate-900 mb-2 tracking-tight">Interview Successfully Completed</h2>
+            <p className="text-slate-500 font-medium max-w-lg mx-auto leading-relaxed">
+              Alex has finished your screening. Your profile and performance data have been submitted to the recruitment team.
+            </p>
+          </div>
           
           {isEvaluating ? (
-            <div className="flex flex-col items-center gap-4">
+            <div className="flex flex-col items-center gap-4 py-10">
               <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
-              <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Generating Assessment Report...</p>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Alex is generating your assessment report...</p>
             </div>
           ) : evaluation && (
-            <div className="space-y-12">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
-                <div className="bg-slate-50 p-10 rounded-[2.5rem] border border-slate-100 flex flex-col justify-center items-center">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Interview Performance</span>
+            <div className="space-y-12 animate-in slide-in-from-bottom-6 duration-700">
+              {/* Score and Core Metrics */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div className="bg-slate-50 p-8 rounded-[2.5rem] border border-slate-100 flex flex-col justify-center items-center shadow-sm">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-4">Overall Performance</span>
                   <div className="relative">
                     <svg className="w-32 h-32 transform -rotate-90">
                       <circle cx="64" cy="64" r="58" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-slate-200" />
@@ -454,43 +573,76 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
                     </svg>
                     <span className="absolute inset-0 flex items-center justify-center text-3xl font-black text-slate-900">{evaluation.score}</span>
                   </div>
+                  <span className="mt-4 text-[10px] font-bold text-indigo-500 uppercase tracking-widest">AI Evaluation Score</span>
                 </div>
-                <div className="space-y-6">
-                  <div className="bg-white border border-slate-100 p-6 rounded-3xl shadow-sm h-full">
-                    <h4 className="font-black text-slate-900 uppercase text-[10px] tracking-widest mb-4 flex items-center gap-2">
-                      <Star className="w-4 h-4 text-amber-500" /> Key Strengths
-                    </h4>
-                    <div className="space-y-3">
-                      {evaluation.keyStrengths.slice(0, 3).map((s, i) => (
-                        <div key={i} className="flex gap-3 text-sm text-slate-600 font-medium">
-                          <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
-                          {s}
-                        </div>
-                      ))}
-                    </div>
+
+                <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                   <MetricCard title="Technical Proficiency" text={evaluation.technicalProficiency} icon={Cpu} color="indigo" />
+                   <MetricCard title="Communication Skills" text={evaluation.communicationSkills} icon={MessageSquare} color="emerald" />
+                   <MetricCard title="Cultural Alignment" text={evaluation.culturalFit} icon={Target} color="amber" />
+                   <MetricCard title="Final Summary" text={evaluation.finalRecommendation} icon={TrendingUp} color="blue" />
+                </div>
+              </div>
+
+              {/* Strengths & Improvements */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
+                <div className="bg-emerald-50/50 border border-emerald-100 p-10 rounded-[2.5rem] shadow-sm">
+                  <h4 className="font-black text-emerald-900 uppercase text-[10px] tracking-[0.2em] mb-6 flex items-center gap-3">
+                    <div className="p-2 bg-emerald-100 rounded-xl"><Star className="w-4 h-4 text-emerald-600 fill-current" /></div> 
+                    Key Strengths Identified
+                  </h4>
+                  <div className="space-y-4">
+                    {evaluation.keyStrengths.map((s, i) => (
+                      <div key={i} className="flex gap-4 text-sm text-emerald-800 font-medium bg-white/50 p-4 rounded-2xl border border-emerald-50">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 mt-1.5 shrink-0 shadow-sm shadow-emerald-500/30" />
+                        {s}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-indigo-50/50 border border-indigo-100 p-10 rounded-[2.5rem] shadow-sm">
+                  <h4 className="font-black text-indigo-900 uppercase text-[10px] tracking-[0.2em] mb-6 flex items-center gap-3">
+                    <div className="p-2 bg-indigo-100 rounded-xl"><Lightbulb className="w-4 h-4 text-indigo-600" /></div> 
+                    Growth Opportunities
+                  </h4>
+                  <div className="space-y-4">
+                    {(evaluation.areasForImprovement || []).map((s, i) => (
+                      <div key={i} className="flex gap-4 text-sm text-indigo-800 font-medium bg-white/50 p-4 rounded-2xl border border-indigo-50">
+                        <div className="w-2 h-2 rounded-full bg-indigo-400 mt-1.5 shrink-0 shadow-sm shadow-indigo-400/30" />
+                        {s}
+                      </div>
+                    ))}
+                    {(!evaluation.areasForImprovement || evaluation.areasForImprovement.length === 0) && (
+                      <p className="text-xs text-indigo-400 italic">Alex noted exceptional consistency across all key criteria.</p>
+                    )}
                   </div>
                 </div>
               </div>
 
               {/* Feedback Form */}
-              <div className="border-t border-slate-100 pt-10 text-left">
+              <div className="border-t border-slate-100 pt-12 text-left">
                 {!feedbackSubmitted ? (
-                  <div className="bg-indigo-50/50 p-10 rounded-[2.5rem] border border-indigo-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="bg-slate-50/80 backdrop-blur-sm p-10 rounded-[3rem] border border-slate-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
                     <div className="flex items-center gap-3 mb-6">
-                       <MessageSquare className="w-6 h-6 text-indigo-600" />
-                       <h4 className="text-lg font-black text-slate-900 uppercase tracking-tight">How was Alex?</h4>
+                       <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-600/20">
+                          <Sparkles className="w-6 h-6" />
+                       </div>
+                       <div>
+                          <h4 className="text-lg font-black text-slate-900 uppercase tracking-tight">Rate your Experience</h4>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Alex v2.5 AI Feedback</p>
+                       </div>
                     </div>
-                    <p className="text-sm text-slate-600 font-medium mb-8">We strive to make AI interviews as human and fair as possible. Tell us about your experience.</p>
                     
-                    <div className="space-y-8">
+                    <div className="space-y-10">
                        <div className="space-y-4">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Experience Rating</label>
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Rate the conversation flow</label>
                           <div className="flex gap-4">
                              {[1, 2, 3, 4, 5].map((star) => (
                                 <button 
                                   key={star} 
                                   onClick={() => setFeedbackRating(star)}
-                                  className={`transition-all ${feedbackRating >= star ? 'text-indigo-600 scale-110' : 'text-slate-300 hover:text-indigo-200'}`}
+                                  className={`transition-all ${feedbackRating >= star ? 'text-indigo-600 scale-125' : 'text-slate-300 hover:text-indigo-200'}`}
                                 >
                                    <Star className={`w-8 h-8 ${feedbackRating >= star ? 'fill-current' : ''}`} />
                                 </button>
@@ -499,36 +651,36 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
                        </div>
                        
                        <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Additional Comments</label>
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Alex's Interviewing style</label>
                           <textarea 
                              value={feedbackComments}
                              onChange={(e) => setFeedbackComments(e.target.value)}
-                             placeholder="Any thoughts on Alex's questions or the interview process?"
-                             className="w-full h-32 bg-white border border-slate-100 rounded-3xl p-5 text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                             placeholder="Was Alex clear? Did the questions feel relevant? Any feedback helps us improve."
+                             className="w-full h-32 bg-white border border-slate-200 rounded-3xl p-6 text-sm font-medium focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 outline-none transition-all shadow-sm"
                           />
                        </div>
 
                        <button 
                          onClick={handleSendFeedback}
                          disabled={feedbackRating === 0}
-                         className="px-10 py-5 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-indigo-600/20 hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:grayscale"
+                         className="px-12 py-5 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-2xl shadow-indigo-600/30 hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:grayscale active:scale-95"
                        >
-                          Submit Feedback
+                          Submit Final Report
                        </button>
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-emerald-50 p-10 rounded-[2.5rem] border border-emerald-100 text-center animate-in zoom-in-95 duration-500">
-                     <Heart className="w-12 h-12 text-emerald-500 mx-auto mb-4 animate-bounce" />
-                     <h4 className="text-xl font-black text-emerald-900 uppercase tracking-tight">Feedback Received!</h4>
-                     <p className="text-sm text-emerald-700 font-medium mt-2">Thank you for helping us improve the HireStream experience.</p>
+                  <div className="bg-emerald-50 p-12 rounded-[3.5rem] border border-emerald-100 text-center animate-in zoom-in-95 duration-500 shadow-sm">
+                     <Heart className="w-16 h-16 text-emerald-500 mx-auto mb-6 animate-pulse" />
+                     <h4 className="text-2xl font-black text-emerald-900 uppercase tracking-tight">Thank You!</h4>
+                     <p className="text-sm text-emerald-700/80 font-medium max-w-xs mx-auto mt-2">Your feedback ensures Alex provides a more human-like experience for everyone.</p>
                   </div>
                 )}
               </div>
 
-              <div className="pt-6">
-                <button onClick={clearInterviewState} className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xs uppercase tracking-[0.2em] hover:bg-slate-800 transition-all shadow-xl">
-                  Return to Dashboard
+              <div className="pt-8">
+                <button onClick={clearInterviewState} className="w-full py-6 bg-slate-900 text-white rounded-[2.5rem] font-black text-xs uppercase tracking-[0.3em] hover:bg-slate-800 transition-all shadow-2xl active:scale-95">
+                  Finish and Return to Dashboard
                 </button>
               </div>
             </div>
@@ -587,7 +739,9 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
             </div>
             <div className="absolute top-6 left-6 flex items-center gap-3 bg-black/40 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/10">
               <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-              <span className="text-[10px] text-white font-black uppercase tracking-widest">Encrypted Stream Active</span>
+              <span className="text-[10px] text-white font-black uppercase tracking-widest">
+                {isStarted && !isFinished ? `Live: ${formatTime(elapsedSeconds)}` : 'Encrypted Stream Active'}
+              </span>
             </div>
           </div>
           <div className="bg-white/80 backdrop-blur-xl p-4 rounded-3xl border border-slate-200 shadow-xl flex items-center justify-between">
@@ -826,6 +980,51 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
                     <p className="text-[10px] font-bold uppercase tracking-widest text-indigo-300">Profile Completion</p>
                  </div>
               </div>
+
+              {/* Job Alerts Management for Candidates */}
+              <div className="bg-white p-8 rounded-[3rem] border border-slate-200 shadow-sm space-y-6">
+                <div className="flex items-center justify-between">
+                   <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600">
+                        <Bell className="w-5 h-5" />
+                      </div>
+                      <h4 className="text-xs font-black uppercase tracking-widest">Job Alerts</h4>
+                   </div>
+                   <button 
+                    onClick={handleToggleAlerts}
+                    className={`w-12 h-6 rounded-full transition-colors relative ${subscription?.active ? 'bg-indigo-600' : 'bg-slate-200'}`}
+                   >
+                     <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${subscription?.active ? 'left-7' : 'left-1'}`} />
+                   </button>
+                </div>
+                
+                <form onSubmit={handleAddAlertKeyword} className="space-y-3">
+                   <div className="flex gap-2">
+                     <input 
+                        type="text"
+                        value={alertKeyword}
+                        onChange={(e) => setAlertKeyword(e.target.value)}
+                        placeholder="Keyword (e.g. React)"
+                        className="flex-1 bg-slate-50 border-none rounded-xl px-4 py-2 text-[10px] font-bold outline-none focus:ring-2 focus:ring-indigo-500"
+                     />
+                     <button type="submit" className="p-2 bg-slate-900 text-white rounded-xl"><Plus className="w-4 h-4" /></button>
+                   </div>
+                </form>
+
+                <div className="flex flex-wrap gap-2">
+                   {subscription?.keywords.map(kw => (
+                     <span key={kw} className="flex items-center gap-1 px-3 py-1 bg-indigo-50 text-indigo-600 text-[8px] font-black uppercase rounded-lg border border-indigo-100 group">
+                       {kw}
+                       <button onClick={() => handleRemoveAlertKeyword(kw)} className="opacity-0 group-hover:opacity-100 transition-opacity"><XIcon className="w-2.5 h-2.5" /></button>
+                     </span>
+                   ))}
+                   {(!subscription || subscription.keywords.length === 0) && (
+                     <p className="text-[8px] text-slate-400 italic">No alert keywords set.</p>
+                   )}
+                </div>
+                
+                <p className="text-[8px] text-slate-400 leading-relaxed">You'll receive email notifications when new positions matching these keywords are posted.</p>
+              </div>
            </div>
 
            {/* Editor Panel */}
@@ -982,6 +1181,34 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
            </div>
         </div>
       )}
+    </div>
+  );
+};
+
+interface MetricCardProps {
+  title: string;
+  text: string;
+  icon: any;
+  color: 'indigo' | 'emerald' | 'amber' | 'blue';
+}
+
+const MetricCard: React.FC<MetricCardProps> = ({ title, text, icon: Icon, color }) => {
+  const colorClasses = {
+    indigo: 'bg-indigo-50 border-indigo-100 text-indigo-700',
+    emerald: 'bg-emerald-50 border-emerald-100 text-emerald-700',
+    amber: 'bg-amber-50 border-amber-100 text-amber-700',
+    blue: 'bg-blue-50 border-blue-100 text-blue-700'
+  };
+
+  return (
+    <div className={`p-5 rounded-3xl border ${colorClasses[color]} flex items-start gap-4 shadow-sm`}>
+       <div className={`p-2 rounded-xl bg-white shadow-sm shrink-0`}>
+          <Icon className="w-4 h-4" />
+       </div>
+       <div>
+          <h5 className="text-[10px] font-black uppercase tracking-widest mb-1 opacity-80">{title}</h5>
+          <p className="text-xs font-medium leading-relaxed">{text}</p>
+       </div>
     </div>
   );
 };

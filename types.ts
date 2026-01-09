@@ -57,10 +57,13 @@ export interface Candidate {
   matchAnalysis?: MatchAnalysis;
   summary?: string;
   interviewDate: string;
+  interviewTime?: string;
   profile?: CandidateProfile;
   preparationMessage?: string;
   transcript?: string;
   managerAssessment?: ManagerAssessment;
+  cvReviewed?: boolean;
+  boardMembers?: string[];
 }
 
 export interface JobTemplate {
@@ -85,4 +88,21 @@ export interface InterviewEvaluation {
   finalRecommendation: string;
   keyStrengths: string[];
   areasForImprovement: string[];
+}
+
+export interface JobAlertSubscription {
+  id: string;
+  candidateEmail: string;
+  candidateName: string;
+  keywords: string[];
+  active: boolean;
+  createdAt: string;
+}
+
+export interface JobAlertLog {
+  id: string;
+  candidateEmail: string;
+  jobTitle: string;
+  matchKeyword: string;
+  sentAt: string;
 }

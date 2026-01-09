@@ -5,7 +5,7 @@ import AdminPanel from './components/AdminPanel';
 import ManagerPanel from './components/ManagerPanel';
 import CandidatePanel from './components/CandidatePanel';
 import Login from './components/Login';
-import { Users, Shield, Briefcase, LogOut, User as UserIcon } from 'lucide-react';
+import { Users, Shield, Briefcase, LogOut, User as UserIcon, AlertTriangle } from 'lucide-react';
 
 const AUTH_KEY = 'hirestream_auth';
 
@@ -43,6 +43,36 @@ const App: React.FC = () => {
     return <Login onLogin={handleLogin} />;
   }
 
+  // Refined RBAC Logic: Explicit mapping of roles to panels
+  const renderDashboard = () => {
+    switch (user.role) {
+      case UserRole.ADMIN:
+        return <AdminPanel />;
+      case UserRole.MANAGER:
+        return <ManagerPanel />;
+      case UserRole.CANDIDATE:
+        return <CandidatePanel user={user} />;
+      default:
+        return (
+          <div className="min-h-[60vh] flex flex-col items-center justify-center text-center p-8 bg-white rounded-[3rem] border border-slate-200 shadow-sm animate-in zoom-in-95 duration-500">
+            <div className="w-20 h-20 bg-red-50 rounded-3xl flex items-center justify-center text-red-500 mb-6">
+              <AlertTriangle className="w-10 h-10" />
+            </div>
+            <h2 className="text-2xl font-black text-slate-900 tracking-tight">Access Restricted</h2>
+            <p className="text-slate-500 font-medium max-w-xs mx-auto mt-2">
+              Your account role does not have permission to view this section. Please contact your system administrator.
+            </p>
+            <button 
+              onClick={handleLogout}
+              className="mt-8 px-8 py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all shadow-xl"
+            >
+              Sign Out
+            </button>
+          </div>
+        );
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       <nav className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-50">
@@ -63,10 +93,13 @@ const App: React.FC = () => {
                 <span className="text-sm font-black text-slate-900">{user.name}</span>
                 <div className="flex items-center justify-end gap-1.5">
                   <div className={`w-1.5 h-1.5 rounded-full ${
-                    user.role === UserRole.ADMIN ? 'bg-indigo-500' : 
+                    user.role === UserRole.ADMIN ? 'bg-indigo-500 animate-pulse' : 
                     user.role === UserRole.MANAGER ? 'bg-emerald-500' : 'bg-blue-500'
                   }`} />
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  <span className={`text-[10px] font-black uppercase tracking-widest ${
+                    user.role === UserRole.ADMIN ? 'text-indigo-600' : 
+                    user.role === UserRole.MANAGER ? 'text-emerald-600' : 'text-blue-600'
+                  }`}>
                     {user.role} ACCESS
                   </span>
                 </div>
@@ -87,9 +120,7 @@ const App: React.FC = () => {
       </nav>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 animate-in fade-in duration-500">
-        {user.role === UserRole.ADMIN && <AdminPanel />}
-        {user.role === UserRole.MANAGER && <ManagerPanel />}
-        {user.role === UserRole.CANDIDATE && <CandidatePanel user={user} />}
+        {renderDashboard()}
       </main>
     </div>
   );

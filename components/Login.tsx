@@ -22,7 +22,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     // Simulate network delay
     await new Promise(resolve => setTimeout(resolve, 1200));
 
-    // Demo credentials
+    // Demo credentials with explicit Role-Based Access
     const credentials: Record<string, { pass: string; user: User }> = {
       'admin@hirestream.ai': {
         pass: 'admin123',
@@ -129,7 +129,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           </form>
 
           <div className="mt-10 pt-8 border-t border-slate-100">
-            <p className="text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-6">Demo Accounts</p>
+            <p className="text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-6">Refined Demo Access</p>
             <div className="grid grid-cols-1 gap-3">
               <button onClick={() => quickSelect('admin@hirestream.ai', 'admin123')} className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-100 transition-all text-left group">
                 <div className="w-10 h-10 rounded-lg bg-indigo-600 flex items-center justify-center text-white shrink-0 group-hover:scale-110 transition-transform">
@@ -137,7 +137,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 </div>
                 <div>
                   <p className="text-xs font-bold text-slate-900 leading-none">Admin Portal</p>
-                  <p className="text-[10px] text-slate-400 mt-1">Full system control</p>
+                  <p className="text-[10px] text-indigo-600 font-bold uppercase mt-1 tracking-widest">Full System Control</p>
                 </div>
               </button>
 
@@ -147,7 +147,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 </div>
                 <div>
                   <p className="text-xs font-bold text-slate-900 leading-none">Manager Dashboard</p>
-                  <p className="text-[10px] text-slate-400 mt-1">Review candidates</p>
+                  <p className="text-[10px] text-emerald-600 font-bold uppercase mt-1 tracking-widest">Candidate Reviews</p>
                 </div>
               </button>
 
@@ -157,7 +157,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 </div>
                 <div>
                   <p className="text-xs font-bold text-slate-900 leading-none">Candidate Interface</p>
-                  <p className="text-[10px] text-slate-400 mt-1">Take your interview</p>
+                  <p className="text-[10px] text-blue-600 font-bold uppercase mt-1 tracking-widest">Interview Access</p>
                 </div>
               </button>
             </div>
@@ -165,7 +165,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         </div>
         
         <p className="text-center mt-8 text-slate-400 text-[10px] uppercase font-bold tracking-[0.2em]">
-          HireStream AI &copy; 2024 Intelligent Recruiting
+          HireStream AI &copy; 2024 Role-Based Recruiting
         </p>
       </div>
     </div>
