@@ -6,7 +6,7 @@ import {
   Briefcase, ChevronRight, UserCircle2, Headphones, Sparkles, History, Info, 
   User, MessageSquare, PlayCircle, ShieldCheck, LayoutGrid, Search, MapPin, 
   Clock as ClockIcon, Zap, ArrowRight, Bookmark, Building2, Pencil, Save, Plus, X as XIcon, GraduationCap, BriefcaseIcon, FileText, Settings, Heart, Upload, File,
-  TrendingUp, AlertTriangle, Lightbulb, Clock, Bell, Trash2
+  TrendingUp, AlertTriangle, Lightbulb, Clock, Bell, Trash2, Volume2
 } from 'lucide-react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { evaluateInterview } from '../services/geminiService';
@@ -60,8 +60,10 @@ interface CandidatePanelProps {
   user: UserType;
 }
 
+const PREP_TIME_LIMIT = 120; // 2 minutes
+
 const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
-  const [view, setView] = useState<'portal' | 'interview'>('portal');
+  const [view, setView] = useState<'portal' | 'preparation' | 'interview'>('portal');
   const [activeTab, setActiveTab] = useState<'jobs' | 'interviews' | 'profile'>('jobs');
   const [isStarted, setIsStarted] = useState(false);
   const [isFinished, setIsFinished] = useState(false);
@@ -77,8 +79,10 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [hasResumeData, setHasResumeData] = useState(false);
   
-  // Timer State
+  // Timer States
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [prepTimeLeft, setPrepTimeLeft] = useState(PREP_TIME_LIMIT);
+  const [micLevel, setMicLevel] = useState(0);
   
   // Job Alerts State
   const [subscription, setSubscription] = useState<JobAlertSubscription | null>(null);
@@ -111,6 +115,8 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef(0);
   const audioSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
   
   // Video & Session Refs
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -118,22 +124,69 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Timer Effect
+  // Preparation Timer Effect
   useEffect(() => {
     let interval: number;
-    if (isStarted && !isFinished) {
+    if (view === 'preparation' && prepTimeLeft > 0) {
+      interval = window.setInterval(() => {
+        setPrepTimeLeft(prev => prev - 1);
+      }, 1000);
+    } else if (view === 'preparation' && prepTimeLeft === 0) {
+      proceedToInterview();
+    }
+    return () => clearInterval(interval);
+  }, [view, prepTimeLeft]);
+
+  // Interview Timer Effect
+  useEffect(() => {
+    let interval: number;
+    if (isStarted && !isFinished && view === 'interview') {
       interval = window.setInterval(() => {
         setElapsedSeconds(prev => prev + 1);
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isStarted, isFinished]);
+  }, [isStarted, isFinished, view]);
 
   const formatTime = (totalSeconds: number) => {
     const mins = Math.floor(totalSeconds / 60);
     const secs = totalSeconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Mic level analyzer for Preparation Room
+  useEffect(() => {
+    if (view === 'preparation' && stream && micActive) {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+
+      const updateLevel = () => {
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          sum += dataArray[i];
+        }
+        const average = sum / bufferLength;
+        setMicLevel(average);
+        animationFrameRef.current = requestAnimationFrame(updateLevel);
+      };
+      updateLevel();
+
+      return () => {
+        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+        audioContext.close();
+      };
+    } else {
+      setMicLevel(0);
+    }
+  }, [view, stream, micActive]);
 
   // Load persistence and candidate data
   useEffect(() => {
@@ -147,11 +200,8 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
         const state = JSON.parse(savedState);
         if (state.messages) setMessages(state.messages);
         if (state.elapsedSeconds) setElapsedSeconds(state.elapsedSeconds);
-        // We always start at portal on initial load to give the user a choice, 
-        // unless they click "Resume"
         if (state.activeInterview) {
           setActiveInterview(state.activeInterview);
-          // If messages exist and it's not finished, show the resume button
           if (state.messages && state.messages.length > 0 && !state.isFinished) {
             setHasResumeData(true);
           }
@@ -179,7 +229,6 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave));
     
-    // Update hasResumeData based on state
     if (messages.length > 0 && activeInterview && !isFinished) {
       setHasResumeData(true);
     } else {
@@ -202,7 +251,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
         id: `sub-${Date.now()}`,
         candidateEmail: user.email,
         candidateName: user.name,
-        keywords: profileForm.skills.slice(0, 3), // Default to some skills
+        keywords: profileForm.skills.slice(0, 3),
         active: true,
         createdAt: new Date().toISOString()
       };
@@ -262,7 +311,6 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
       const userInterviews = candidates.filter(c => c.email === user.email);
       setCandidateInterviews(userInterviews);
       
-      // Load current profile from the first interview or set defaults
       if (userInterviews.length > 0 && userInterviews[0].profile) {
         setProfileForm(userInterviews[0].profile);
       }
@@ -278,30 +326,27 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   // Self-view stream management
   useEffect(() => {
     const video = videoRef.current;
-    if (isStarted && video && stream && cameraActive) {
+    if ((isStarted || view === 'preparation') && video && stream && cameraActive) {
       if (video.srcObject !== stream) {
         video.srcObject = stream;
         video.play().catch(err => console.error("Error playing video:", err));
       }
-    } else if (video && (!cameraActive || !isStarted)) {
+    } else if (video && (!cameraActive || (!isStarted && view !== 'preparation'))) {
       video.srcObject = null;
     }
-  }, [isStarted, stream, cameraActive, view]);
+  }, [isStarted, view, stream, cameraActive]);
 
   const initStream = async () => {
-    // Explicit availability check
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       alert("Your browser does not support media access. Please try a modern browser like Chrome or Edge.");
       return null;
     }
 
     try {
-      // If there's an existing stream, try to reuse it or stop it
       if (stream) {
         stream.getTracks().forEach(track => track.stop());
       }
       
-      // Use more flexible constraints to ensure success across various hardware
       const s = await navigator.mediaDevices.getUserMedia({ 
         video: { 
           width: { ideal: 1280, max: 1920 },
@@ -407,15 +452,31 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
     sessionRef.current = await sessionPromise;
   };
 
-  const startInterview = async (interview: Candidate, isResume: boolean = false) => {
-    const s = await initStream();
-    if (!s) return; // Error handled inside initStream
+  const startPreparation = async (interview: Candidate, isResume: boolean = false) => {
+    if (isResume) {
+      // Skip prep for resumes
+      const s = await initStream();
+      if (!s) return;
+      const template = JOB_TEMPLATES.find(t => t.title === interview.role) || JOB_TEMPLATES[0];
+      setView('interview');
+      setIsStarted(true);
+      setActiveInterview(interview);
+      await connectToLiveAPI(s, template.systemPrompt, template.title, true);
+    } else {
+      const s = await initStream();
+      if (!s) return;
+      setActiveInterview(interview);
+      setView('preparation');
+      setPrepTimeLeft(PREP_TIME_LIMIT);
+    }
+  };
 
-    const template = JOB_TEMPLATES.find(t => t.title === interview.role) || JOB_TEMPLATES[0];
+  const proceedToInterview = async () => {
+    if (!activeInterview || !stream) return;
+    const template = JOB_TEMPLATES.find(t => t.title === activeInterview.role) || JOB_TEMPLATES[0];
     setView('interview');
     setIsStarted(true);
-    setActiveInterview(interview);
-    await connectToLiveAPI(s, template.systemPrompt, template.title, isResume);
+    await connectToLiveAPI(stream, template.systemPrompt, template.title, false);
   };
 
   const finishInterview = async () => {
@@ -447,7 +508,6 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   const handleSendFeedback = () => {
     if (feedbackRating === 0) return;
     setFeedbackSubmitted(true);
-    console.log("Feedback submitted:", { rating: feedbackRating, comments: feedbackComments });
   };
 
   const handleSend = () => {
@@ -517,7 +577,6 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
     if (!file) return;
 
     setIsUploadingResume(true);
-    // Simulate upload progress
     await new Promise(r => setTimeout(r, 1500));
     setUploadedResumeName(file.name);
     setIsUploadingResume(false);
@@ -537,6 +596,106 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   };
 
   // --- Rendering ---
+
+  if (view === 'preparation') {
+    return (
+      <div className="max-w-6xl mx-auto py-12 px-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+          {/* Media Check Section */}
+          <div className="space-y-8">
+            <div className="bg-slate-900 rounded-[3rem] overflow-hidden border-8 border-white shadow-2xl relative aspect-video">
+              {cameraActive ? (
+                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-slate-800">
+                  <CameraOff className="w-16 h-16 text-slate-600" />
+                </div>
+              )}
+              
+              <div className="absolute top-6 left-6 flex items-center gap-3 bg-black/40 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/10">
+                <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
+                <span className="text-[10px] text-white font-black uppercase tracking-widest">Setup Phase</span>
+              </div>
+
+              {/* Mic Meter Overlay */}
+              <div className="absolute bottom-6 left-6 right-6 flex items-center gap-4 bg-black/40 backdrop-blur-md px-6 py-4 rounded-2xl border border-white/10">
+                <Mic className={`w-5 h-5 ${micLevel > 10 ? 'text-indigo-400' : 'text-slate-400'}`} />
+                <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-indigo-500 transition-all duration-75" 
+                    style={{ width: `${Math.min(100, micLevel * 2)}%` }} 
+                  />
+                </div>
+                <span className="text-[10px] text-white font-bold uppercase tracking-widest whitespace-nowrap">Mic Active</span>
+              </div>
+            </div>
+
+            <div className="flex justify-center gap-6">
+              <button 
+                onClick={() => setMicActive(!micActive)} 
+                className={`p-6 rounded-[2rem] transition-all ${micActive ? 'bg-white text-slate-600 border border-slate-200 shadow-sm' : 'bg-red-500 text-white shadow-2xl shadow-red-500/30'}`}
+              >
+                {micActive ? <Mic className="w-8 h-8"/> : <MicOff className="w-8 h-8"/>}
+              </button>
+              <button 
+                onClick={() => setCameraActive(!cameraActive)} 
+                className={`p-6 rounded-[2rem] transition-all ${cameraActive ? 'bg-white text-slate-600 border border-slate-200 shadow-sm' : 'bg-red-500 text-white shadow-2xl shadow-red-500/30'}`}
+              >
+                {cameraActive ? <Camera className="w-8 h-8"/> : <CameraOff className="w-8 h-8"/>}
+              </button>
+            </div>
+          </div>
+
+          {/* Prep Info Section */}
+          <div className="flex flex-col justify-between">
+            <div className="space-y-10">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-4xl font-black text-slate-900 tracking-tight leading-tight">Preparation Room</h2>
+                  <p className="text-slate-500 font-medium mt-1">Get ready for your session with Alex.</p>
+                </div>
+                <div className="bg-white px-6 py-4 rounded-[2rem] border border-slate-100 shadow-sm text-center">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Session Starts In</p>
+                  <p className="text-2xl font-black text-indigo-600 tabular-nums">{formatTime(prepTimeLeft)}</p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <PrepTip 
+                  icon={Sparkles} 
+                  title="Speak Clearly" 
+                  desc="Alex uses advanced speech-to-text. For best results, speak at a natural pace in a quiet environment." 
+                />
+                <PrepTip 
+                  icon={Video} 
+                  title="Maintain Eye Contact" 
+                  desc="Looking at your camera helps simulate a real face-to-face connection during the interview." 
+                />
+                <PrepTip 
+                  icon={History} 
+                  title="Detailed Responses" 
+                  desc="Provide specific examples from your past experience. Alex values depth and context." 
+                />
+                <PrepTip 
+                  icon={Target} 
+                  title="Stay Focused" 
+                  desc="Ensure your internet connection is stable. The interview will take approximately 10-15 minutes." 
+                />
+              </div>
+            </div>
+
+            <button 
+              onClick={proceedToInterview}
+              className="mt-12 w-full py-6 bg-indigo-600 text-white rounded-[2rem] font-black text-xs uppercase tracking-[0.3em] shadow-2xl shadow-indigo-600/30 hover:bg-indigo-700 transition-all flex items-center justify-center gap-4 group"
+            >
+              Start Interview Now
+              <ArrowRight className="w-5 h-5 group-hover:translate-x-2 transition-transform" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (view === 'interview') {
     if (isFinished) return (
@@ -720,7 +879,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
                 <h3 className="text-2xl font-black text-white uppercase tracking-tight mb-2">Resume Session</h3>
                 <p className="text-slate-300 text-sm font-medium mb-8 max-w-xs">You have an ongoing interview for <strong>{activeInterview?.role}</strong>. Ready to continue?</p>
                 <button 
-                  onClick={() => activeInterview && startInterview(activeInterview, true)}
+                  onClick={() => activeInterview && startPreparation(activeInterview, true)}
                   className="px-12 py-5 bg-white text-slate-900 rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-2xl hover:bg-indigo-50 transition-all active:scale-95"
                 >
                   Join Live Room
@@ -930,7 +1089,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
                     <div className="flex items-center gap-3 text-sm text-slate-600 font-medium"><ClockIcon className="w-4 h-4 text-slate-400" />Scheduled: {interview.interviewDate}</div>
                   </div>
                   {interview.status === 'PENDING' ? (
-                    <button onClick={() => startInterview(interview)} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-indigo-600/20 hover:bg-indigo-700 transition-all flex items-center justify-center gap-3"><PlayCircle className="w-5 h-5" /> Enter Interview Room</button>
+                    <button onClick={() => startPreparation(interview)} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-indigo-600/20 hover:bg-indigo-700 transition-all flex items-center justify-center gap-3"><PlayCircle className="w-5 h-5" /> Enter Preparation Room</button>
                   ) : <div className="text-center py-5 bg-slate-50 rounded-2xl text-[10px] font-black text-slate-400 uppercase tracking-widest">Application Under Review</div>}
                 </div>
               ))}
@@ -1022,12 +1181,10 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
                      <p className="text-[8px] text-slate-400 italic">No alert keywords set.</p>
                    )}
                 </div>
-                
-                <p className="text-[8px] text-slate-400 leading-relaxed">You'll receive email notifications when new positions matching these keywords are posted.</p>
               </div>
            </div>
 
-           {/* Editor Panel */}
+           {/* Profile Editor */}
            <div className="lg:col-span-8 bg-white rounded-[3.5rem] border border-slate-200 shadow-sm overflow-hidden flex flex-col">
               <div className="p-10 border-b border-slate-50 flex justify-between items-center bg-slate-50/50">
                  <div className="flex items-center gap-4">
@@ -1184,6 +1341,18 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
     </div>
   );
 };
+
+const PrepTip: React.FC<{ icon: any; title: string; desc: string }> = ({ icon: Icon, title, desc }) => (
+  <div className="flex gap-5 bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm group hover:border-indigo-200 transition-all">
+    <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 shrink-0 group-hover:scale-110 transition-transform">
+      <Icon className="w-6 h-6" />
+    </div>
+    <div>
+      <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight mb-1">{title}</h4>
+      <p className="text-xs text-slate-500 font-medium leading-relaxed">{desc}</p>
+    </div>
+  </div>
+);
 
 interface MetricCardProps {
   title: string;

@@ -1,20 +1,23 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Settings, Plus, Save, Terminal, ExternalLink, X, Trash2, LayoutList, PieChart, 
+  Settings, Plus, Save, Terminal, ExternalLink, X, Trash2, LayoutList, PieChart as PieChartIcon, 
   FileText, BarChart3, Users, Bell, Mail, Search, CheckCircle2, History, 
-  AlertCircle, Play, Pause, Clock
+  AlertCircle, Play, Pause, Clock, TrendingUp, Cpu, Award
 } from 'lucide-react';
+import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { JOB_TEMPLATES as INITIAL_TEMPLATES } from '../constants';
 import { JobTemplate, Candidate, JobAlertSubscription, JobAlertLog } from '../types';
 import ReportingSystem from './ReportingSystem';
 
 const ALERTS_STORAGE_KEY = 'hirestream_job_alerts';
 const ALERTS_LOG_KEY = 'hirestream_job_alerts_log';
+const CANDIDATE_DB_KEY = 'hirestream_candidates_db';
 
 const AdminPanel: React.FC = () => {
-  const [activeView, setActiveView] = useState<'templates' | 'reports' | 'alerts'>('templates');
+  const [activeView, setActiveView] = useState<'templates' | 'reports' | 'alerts' | 'analytics'>('templates');
   const [templates, setTemplates] = useState<JobTemplate[]>(INITIAL_TEMPLATES);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [webhookUrl, setWebhookUrl] = useState('https://n8n.your-instance.com/webhook/recruit-sync');
   const [isAdding, setIsAdding] = useState(false);
   
@@ -39,7 +42,46 @@ const AdminPanel: React.FC = () => {
     
     const savedLogs = localStorage.getItem(ALERTS_LOG_KEY);
     if (savedLogs) setAlertLogs(JSON.parse(savedLogs));
+
+    // Load Candidates for Analytics
+    const savedCandidates = localStorage.getItem(CANDIDATE_DB_KEY);
+    if (savedCandidates) setCandidates(JSON.parse(savedCandidates));
   }, []);
+
+  // Analytics Calculations
+  const analyticsData = useMemo(() => {
+    const statusCounts = candidates.reduce((acc: any, c) => {
+      acc[c.status] = (acc[c.status] || 0) + 1;
+      return acc;
+    }, {});
+
+    const pieData = Object.keys(statusCounts).map(status => ({
+      name: status,
+      value: statusCounts[status]
+    }));
+
+    const scoresByRole = candidates.reduce((acc: any, c) => {
+      if (c.score) {
+        if (!acc[c.role]) acc[c.role] = { total: 0, count: 0 };
+        acc[c.role].total += c.score;
+        acc[c.role].count += 1;
+      }
+      return acc;
+    }, {});
+
+    const barData = Object.keys(scoresByRole).map(role => ({
+      role: role.split(' ').slice(0, 2).join(' '), // Shorten title
+      avgScore: Math.round(scoresByRole[role].total / scoresByRole[role].count)
+    }));
+
+    const avgTotalScore = candidates.length > 0 
+      ? Math.round(candidates.reduce((acc, c) => acc + (c.score || 0), 0) / candidates.filter(c => c.score).length)
+      : 0;
+
+    return { pieData, barData, avgTotalScore };
+  }, [candidates]);
+
+  const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#64748b'];
 
   const handleSaveSub = (updatedSubs: JobAlertSubscription[]) => {
     setSubscriptions(updatedSubs);
@@ -62,29 +104,29 @@ const AdminPanel: React.FC = () => {
     localStorage.removeItem(ALERTS_LOG_KEY);
   };
 
-  const handleAddQuestion = () => {
-    setNewTemplate(prev => ({ ...prev, questions: [...prev.questions, ''] }));
-  };
-
-  const handleRemoveQuestion = (index: number) => {
-    setNewTemplate(prev => ({
-      ...prev,
-      questions: prev.questions.filter((_, i) => i !== index)
-    }));
-  };
-
-  const handleQuestionChange = (index: number, value: string) => {
-    const updatedQuestions = [...newTemplate.questions];
-    updatedQuestions[index] = value;
-    setNewTemplate(prev => ({ ...prev, questions: updatedQuestions }));
-  };
-
   const validate = () => {
     const newErrors: Record<string, string> = {};
-    if (!newTemplate.title.trim()) newErrors.title = 'Title is required';
-    if (!newTemplate.description.trim()) newErrors.description = 'Description is required';
-    if (!newTemplate.systemPrompt.trim()) newErrors.systemPrompt = 'System prompt is required';
-    if (newTemplate.questions.some(q => !q.trim())) newErrors.questions = 'All questions must be filled';
+    if (!newTemplate.title.trim()) {
+      newErrors.title = 'Job title is required';
+    } else if (newTemplate.title.length < 5) {
+      newErrors.title = 'Title must be at least 5 characters';
+    }
+
+    if (!newTemplate.description.trim()) {
+      newErrors.description = 'Job description is required';
+    } else if (newTemplate.description.length < 20) {
+      newErrors.description = 'Description must be at least 20 characters';
+    }
+
+    if (!newTemplate.systemPrompt.trim()) {
+      newErrors.systemPrompt = 'System prompt is required for the AI agent';
+    }
+
+    if (newTemplate.questions.length === 0) {
+      newErrors.questions = 'At least one interview question is required';
+    } else if (newTemplate.questions.some(q => !q.trim())) {
+      newErrors.questions = 'All questions must have content';
+    }
     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -136,21 +178,22 @@ const AdminPanel: React.FC = () => {
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
         <div>
           <h2 className="text-3xl font-black text-slate-900 tracking-tight">System Administration</h2>
           <p className="text-slate-500 font-medium">Manage recruitment logic and system intelligence</p>
         </div>
-        <div className="flex bg-white p-1 rounded-2xl border border-slate-200 shadow-sm">
+        <div className="flex bg-white p-1 rounded-2xl border border-slate-200 shadow-sm overflow-x-auto max-w-full">
           {[
             { id: 'templates', label: 'Templates', icon: LayoutList },
             { id: 'reports', label: 'Reports Hub', icon: BarChart3 },
-            { id: 'alerts', label: 'Job Alerts', icon: Bell }
+            { id: 'alerts', label: 'Job Alerts', icon: Bell },
+            { id: 'analytics', label: 'Analytics', icon: PieChartIcon }
           ].map(view => (
             <button 
               key={view.id}
               onClick={() => setActiveView(view.id as any)}
-              className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeView === view.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-slate-600'}`}
+              className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap ${activeView === view.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-slate-600'}`}
             >
               <view.icon className="w-3.5 h-3.5" />
               {view.label}
@@ -160,6 +203,83 @@ const AdminPanel: React.FC = () => {
       </div>
 
       {activeView === 'reports' && <ReportingSystem />}
+
+      {activeView === 'analytics' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          {/* Summary Stats */}
+          <div className="lg:col-span-12 grid grid-cols-1 md:grid-cols-4 gap-6">
+            <StatBox icon={LayoutList} label="Active Templates" value={templates.length.toString()} color="text-indigo-600" bg="bg-indigo-50" />
+            <StatBox icon={Users} label="Total Candidates" value={candidates.length.toString()} color="text-emerald-600" bg="bg-emerald-50" />
+            <StatBox icon={Award} label="Avg. Interview Score" value={`${analyticsData.avgTotalScore}%`} color="text-amber-600" bg="bg-amber-50" />
+            <StatBox icon={TrendingUp} label="Conversion Rate" value="24%" color="text-blue-600" bg="bg-blue-50" />
+          </div>
+
+          {/* Charts */}
+          <div className="lg:col-span-7 bg-white p-8 rounded-[3rem] border border-slate-200 shadow-sm">
+            <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest mb-8 flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-indigo-600" />
+              Performance by Role
+            </h3>
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={analyticsData.barData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="role" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#94a3b8' }} />
+                  <YAxis hide domain={[0, 100]} />
+                  <Tooltip 
+                    cursor={{ fill: '#f8fafc' }}
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                  />
+                  <Bar dataKey="avgScore" radius={[10, 10, 0, 0]}>
+                    {analyticsData.barData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="lg:col-span-5 bg-white p-8 rounded-[3rem] border border-slate-200 shadow-sm">
+            <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest mb-8 flex items-center gap-2">
+              <PieChartIcon className="w-4 h-4 text-indigo-600" />
+              Pipeline Distribution
+            </h3>
+            <div className="h-80 w-full relative">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={analyticsData.pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={100}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {analyticsData.pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-2xl font-black text-slate-900">{candidates.length}</span>
+                <span className="text-[10px] font-black text-slate-400 uppercase">Total</span>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              {analyticsData.pieData.map((entry, index) => (
+                <div key={entry.name} className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
+                  <span className="text-[10px] font-black text-slate-400 uppercase truncate">{entry.name}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeView === 'alerts' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -315,75 +435,116 @@ const AdminPanel: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
             {isAdding ? (
-              <section className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm animate-in zoom-in-95 duration-300">
+              <section className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-sm animate-in zoom-in-95 duration-300">
                 <div className="flex justify-between items-center mb-10">
-                  <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">New Interview Template</h3>
-                  <button onClick={() => setIsAdding(false)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-400"><X className="w-5 h-5" /></button>
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-600/20">
+                      <Plus className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight leading-none">Job Template</h3>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Configure automated interview logic</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setIsAdding(false)} className="p-3 hover:bg-slate-100 rounded-2xl text-slate-400 transition-all">
+                    <X className="w-6 h-6" />
+                  </button>
                 </div>
 
-                <div className="space-y-6">
+                <div className="space-y-8">
                   <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Job Title</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                      <LayoutList className="w-3.5 h-3.5" /> Job Title
+                    </label>
                     <input 
                       type="text"
                       value={newTemplate.title}
                       onChange={e => setNewTemplate(prev => ({ ...prev, title: e.target.value }))}
-                      className="w-full p-4 bg-slate-50 border-none rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-medium"
+                      className={`w-full p-5 bg-slate-50 border-2 rounded-[1.5rem] outline-none transition-all font-bold ${errors.title ? 'border-red-500 ring-4 ring-red-500/10' : 'border-transparent focus:border-indigo-500'}`}
                       placeholder="e.g. Senior Backend Engineer"
                     />
-                    {errors.title && <p className="text-[10px] text-red-500 font-bold mt-1 uppercase">{errors.title}</p>}
+                    {errors.title && <p className="text-[10px] text-red-500 font-black mt-2 uppercase tracking-widest">{errors.title}</p>}
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Job Description</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                      <FileText className="w-3.5 h-3.5" /> Job Description
+                    </label>
                     <textarea 
                       value={newTemplate.description}
                       onChange={e => setNewTemplate(prev => ({ ...prev, description: e.target.value }))}
-                      className="w-full h-24 p-4 bg-slate-50 border-none rounded-2xl outline-none text-sm transition-all focus:ring-2 focus:ring-indigo-500"
-                      placeholder="Briefly describe the role..."
+                      className={`w-full h-32 p-5 bg-slate-50 border-2 rounded-[1.5rem] outline-none text-sm transition-all leading-relaxed ${errors.description ? 'border-red-500 ring-4 ring-red-500/10' : 'border-transparent focus:border-indigo-500'}`}
+                      placeholder="Briefly describe the role, goals, and team context..."
                     />
-                    {errors.description && <p className="text-[10px] text-red-500 font-bold mt-1 uppercase">{errors.description}</p>}
+                    {errors.description && <p className="text-[10px] text-red-500 font-black mt-2 uppercase tracking-widest">{errors.description}</p>}
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Instructions for AI Agent</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                      <Cpu className="w-3.5 h-3.5" /> Agent Instructions
+                    </label>
                     <textarea 
                       value={newTemplate.systemPrompt}
                       onChange={e => setNewTemplate(prev => ({ ...prev, systemPrompt: e.target.value }))}
-                      className="w-full h-32 p-4 bg-slate-50 border-none rounded-2xl outline-none text-sm font-mono transition-all focus:ring-2 focus:ring-indigo-500"
+                      className={`w-full h-40 p-5 bg-slate-950 text-emerald-400 border-2 rounded-[1.5rem] outline-none text-xs font-mono transition-all leading-relaxed ${errors.systemPrompt ? 'border-red-500 ring-4 ring-red-500/10' : 'border-transparent focus:border-indigo-500'}`}
                       placeholder="You are an expert technical recruiter..."
                     />
-                    {errors.systemPrompt && <p className="text-[10px] text-red-500 font-bold mt-1 uppercase">{errors.systemPrompt}</p>}
+                    <div className="flex justify-between items-center mt-2">
+                      {errors.systemPrompt ? (
+                        <p className="text-[10px] text-red-500 font-black uppercase tracking-widest">{errors.systemPrompt}</p>
+                      ) : (
+                        <p className="text-[10px] text-slate-400 font-medium">Advanced: This prompt defines how Alex interacts during the session.</p>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="pt-6 flex gap-3">
-                    <button onClick={handleSave} className="flex-1 bg-indigo-600 text-white font-black py-5 rounded-2xl hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-600/20 uppercase text-xs tracking-[0.2em]">Save Template & Notify</button>
-                    <button onClick={() => setIsAdding(false)} className="px-10 bg-slate-100 text-slate-600 font-black py-5 rounded-2xl hover:bg-slate-200 transition-all uppercase text-xs tracking-widest">Cancel</button>
+                  <div className="pt-6 flex gap-4">
+                    <button 
+                      onClick={handleSave} 
+                      className="flex-1 bg-indigo-600 text-white font-black py-6 rounded-[1.5rem] hover:bg-indigo-700 transition-all shadow-2xl shadow-indigo-600/30 uppercase text-xs tracking-[0.2em] flex items-center justify-center gap-3"
+                    >
+                      <Save className="w-5 h-5" />
+                      Finalize & Create Role
+                    </button>
+                    <button 
+                      onClick={() => setIsAdding(false)} 
+                      className="px-10 bg-slate-100 text-slate-600 font-black py-6 rounded-[1.5rem] hover:bg-slate-200 transition-all uppercase text-xs tracking-widest"
+                    >
+                      Discard
+                    </button>
                   </div>
                 </div>
               </section>
             ) : (
               <div className="space-y-6">
-                <div className="bg-white p-10 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center group border-dashed hover:border-indigo-300 transition-all cursor-pointer" onClick={() => setIsAdding(true)}>
-                  <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 mb-4 group-hover:scale-110 transition-transform">
-                    <Plus className="w-8 h-8" />
+                <div className="bg-white p-12 rounded-[3.5rem] border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center group border-dashed hover:border-indigo-300 transition-all cursor-pointer" onClick={() => setIsAdding(true)}>
+                  <div className="w-20 h-20 bg-indigo-50 rounded-[2rem] flex items-center justify-center text-indigo-600 mb-6 group-hover:scale-110 transition-transform shadow-sm">
+                    <Plus className="w-10 h-10" />
                   </div>
-                  <h4 className="font-black text-slate-900 uppercase tracking-widest text-sm">Add New Role Template</h4>
-                  <p className="text-slate-400 text-xs mt-1 font-medium">Define custom questions and AI personality for new job openings.</p>
+                  <h4 className="font-black text-slate-900 uppercase tracking-widest text-lg">New Role Template</h4>
+                  <p className="text-slate-400 text-sm mt-1 font-medium max-w-xs">Define custom interview parameters and AI logic for a new hiring pipeline.</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {templates.map(tmpl => (
-                    <div key={tmpl.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 hover:shadow-xl transition-all group">
-                      <div className="flex justify-between items-start mb-6">
-                        <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white"><LayoutList className="w-5 h-5" /></div>
-                        <Settings className="w-4 h-4 text-slate-300 hover:text-indigo-600 cursor-pointer" />
+                    <div key={tmpl.id} className="bg-white p-8 rounded-[2.5rem] border border-slate-200 hover:shadow-xl transition-all group relative overflow-hidden">
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50/30 rounded-full blur-3xl -mr-16 -mt-16 group-hover:bg-indigo-100/50 transition-colors" />
+                      <div className="flex justify-between items-start mb-6 relative">
+                        <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center text-white shadow-lg"><LayoutList className="w-5 h-5" /></div>
+                        <div className="flex gap-2">
+                          <button className="p-2 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all">
+                            <Settings className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
-                      <h4 className="font-black text-slate-900 text-lg leading-tight mb-2">{tmpl.title}</h4>
-                      <p className="text-xs text-slate-400 font-medium mb-6 line-clamp-2">{tmpl.description}</p>
-                      <div className="flex items-center justify-between pt-6 border-t border-slate-50">
-                        <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">{tmpl.questions.length} Questions</span>
-                        <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">v1.2</span>
+                      <h4 className="font-black text-slate-900 text-lg leading-tight mb-2 group-hover:text-indigo-600 transition-colors">{tmpl.title}</h4>
+                      <p className="text-xs text-slate-400 font-medium mb-8 line-clamp-2 leading-relaxed">{tmpl.description}</p>
+                      <div className="flex items-center justify-between pt-6 border-t border-slate-50 relative">
+                        <div className="flex items-center gap-2">
+                          <History className="w-3.5 h-3.5 text-slate-400" />
+                          <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">{tmpl.questions.length} Questions</span>
+                        </div>
+                        <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Active v1.2</span>
                       </div>
                     </div>
                   ))}
@@ -393,19 +554,29 @@ const AdminPanel: React.FC = () => {
           </div>
 
           <div className="space-y-6">
-            <section className="bg-slate-900 text-white p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden">
+            <section className="bg-slate-900 text-white p-10 rounded-[3rem] shadow-2xl relative overflow-hidden border-8 border-white">
               <div className="absolute top-0 right-0 p-8 opacity-5"><Terminal className="w-32 h-32" /></div>
               <div className="relative z-10">
-                <h3 className="text-lg font-black uppercase tracking-widest mb-4">Integrations</h3>
-                <p className="text-slate-400 text-xs font-medium mb-8 leading-relaxed">Connect your recruitment data with Google Sheets or n8n webhooks.</p>
-                <div className="space-y-4">
-                  <input 
-                    type="text"
-                    value={webhookUrl}
-                    onChange={(e) => setWebhookUrl(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl text-[10px] font-mono text-emerald-400 outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <button className="w-full py-4 bg-indigo-600 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20">Update Sync</button>
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center">
+                    <Terminal className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <h3 className="text-sm font-black uppercase tracking-[0.2em]">Sync & Hook</h3>
+                </div>
+                <p className="text-slate-400 text-xs font-medium mb-10 leading-relaxed">
+                  Export recruitment streams and evaluation data to your existing ERP or automation tools.
+                </p>
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Webhook Endpoint</label>
+                    <input 
+                      type="text"
+                      value={webhookUrl}
+                      onChange={(e) => setWebhookUrl(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl text-[10px] font-mono text-emerald-400 outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+                    />
+                  </div>
+                  <button className="w-full py-5 bg-indigo-600 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/20 active:scale-95">Update Integration</button>
                 </div>
               </div>
             </section>
@@ -415,5 +586,17 @@ const AdminPanel: React.FC = () => {
     </div>
   );
 };
+
+const StatBox: React.FC<{ icon: any; label: string; value: string; color: string; bg: string }> = ({ icon: Icon, label, value, color, bg }) => (
+  <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex items-center gap-6 transition-all hover:shadow-md group">
+    <div className={`w-14 h-14 rounded-[1.25rem] flex items-center justify-center ${bg} ${color} shadow-sm group-hover:scale-110 transition-transform`}>
+      <Icon className="w-7 h-7" />
+    </div>
+    <div>
+      <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">{label}</p>
+      <p className={`text-2xl font-black text-slate-900 leading-none`}>{value}</p>
+    </div>
+  </div>
+);
 
 export default AdminPanel;
