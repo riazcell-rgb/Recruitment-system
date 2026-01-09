@@ -5,7 +5,7 @@ import {
   Target, Cpu, Download, AlertCircle, Radio, RotateCcw, Disc, StopCircle, 
   Briefcase, ChevronRight, UserCircle2, Headphones, Sparkles, History, Info, 
   User, MessageSquare, PlayCircle, ShieldCheck, LayoutGrid, Search, MapPin, 
-  Clock as ClockIcon, Zap, ArrowRight, Bookmark, Building2, Pencil, Save, Plus, X as XIcon, GraduationCap, BriefcaseIcon, FileText, Settings, Heart
+  Clock as ClockIcon, Zap, ArrowRight, Bookmark, Building2, Pencil, Save, Plus, X as XIcon, GraduationCap, BriefcaseIcon, FileText, Settings, Heart, Upload, File
 } from 'lucide-react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { evaluateInterview } from '../services/geminiService';
@@ -73,6 +73,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   const [candidateInterviews, setCandidateInterviews] = useState<Candidate[]>([]);
   const [activeInterview, setActiveInterview] = useState<Candidate | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [hasResumeData, setHasResumeData] = useState(false);
   
   // Feedback State
   const [feedbackRating, setFeedbackRating] = useState(0);
@@ -88,6 +89,8 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   });
   const [newSkill, setNewSkill] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [uploadedResumeName, setUploadedResumeName] = useState<string | null>(null);
+  const [isUploadingResume, setIsUploadingResume] = useState(false);
 
   // Transcription Buffers
   const currentInputTranscription = useRef('');
@@ -104,10 +107,56 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const sessionRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Load persistence and candidate data
   useEffect(() => {
     loadCandidateData();
+    
+    // Restore interview state from localStorage
+    const savedState = localStorage.getItem(STORAGE_KEY);
+    if (savedState) {
+      try {
+        const state = JSON.parse(savedState);
+        if (state.messages) setMessages(state.messages);
+        // We always start at portal on initial load to give the user a choice, 
+        // unless they click "Resume"
+        if (state.activeInterview) {
+          setActiveInterview(state.activeInterview);
+          // If messages exist and it's not finished, show the resume button
+          if (state.messages && state.messages.length > 0 && !state.isFinished) {
+            setHasResumeData(true);
+          }
+        }
+        if (state.isFinished) setIsFinished(state.isFinished);
+        if (state.evaluation) setEvaluation(state.evaluation);
+        if (state.feedbackSubmitted) setFeedbackSubmitted(state.feedbackSubmitted);
+      } catch (e) {
+        console.error("Failed to restore interview state", e);
+      }
+    }
   }, [user.email]);
+
+  // Save state to localStorage on any change
+  useEffect(() => {
+    const stateToSave = {
+      messages,
+      view,
+      activeTab,
+      activeInterview,
+      isFinished,
+      evaluation,
+      feedbackSubmitted
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stateToSave));
+    
+    // Update hasResumeData based on state
+    if (messages.length > 0 && activeInterview && !isFinished) {
+      setHasResumeData(true);
+    } else {
+      setHasResumeData(false);
+    }
+  }, [messages, view, activeTab, activeInterview, isFinished, evaluation, feedbackSubmitted]);
 
   const loadCandidateData = () => {
     const db = localStorage.getItem(CANDIDATE_DB_KEY);
@@ -129,16 +178,25 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
     }
   }, [messages, isAiTyping]);
 
+  // Self-view stream management
   useEffect(() => {
-    if (isStarted && videoRef.current && stream && cameraActive) {
-      videoRef.current.srcObject = stream;
-    } else if (videoRef.current && !cameraActive) {
-      videoRef.current.srcObject = null;
+    const video = videoRef.current;
+    if (isStarted && video && stream && cameraActive) {
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
+        video.play().catch(err => console.error("Error playing video:", err));
+      }
+    } else if (video && (!cameraActive || !isStarted)) {
+      video.srcObject = null;
     }
-  }, [isStarted, stream, cameraActive]);
+  }, [isStarted, stream, cameraActive, view]);
 
   const initStream = async () => {
     try {
+      // If there's an existing stream, try to reuse it or stop it
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
       const s = await navigator.mediaDevices.getUserMedia({ 
         video: { width: 1280, height: 720 }, 
         audio: true 
@@ -157,7 +215,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
     return { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' };
   }
 
-  const connectToLiveAPI = async (micStream: MediaStream, systemPrompt: string, roleTitle: string) => {
+  const connectToLiveAPI = async (micStream: MediaStream, systemPrompt: string, roleTitle: string, isResume: boolean = false) => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     inputAudioContextRef.current = new AudioContext({ sampleRate: 16000 });
     outputAudioContextRef.current = new AudioContext({ sampleRate: 24000 });
@@ -177,7 +235,11 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
           processor.connect(inputAudioContextRef.current!.destination);
           
           sessionPromise.then(s => {
-            s.send({ text: `Starting interview for ${roleTitle}. Introduce yourself as Alex and ask the first question.` });
+            if (isResume) {
+              s.send({ text: `We are resuming an interview for ${roleTitle}. Here is the transcript so far: ${messages.map(m => m.text).join('\n')}. Please pick up where we left off.` });
+            } else {
+              s.send({ text: `Starting interview for ${roleTitle}. Introduce yourself as Alex and ask the first question.` });
+            }
           });
         },
         onmessage: async (msg: LiveServerMessage) => {
@@ -229,7 +291,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
     sessionRef.current = await sessionPromise;
   };
 
-  const startInterview = async (interview: Candidate) => {
+  const startInterview = async (interview: Candidate, isResume: boolean = false) => {
     const s = await initStream();
     if (!s) {
       alert("Please allow camera and microphone access to start.");
@@ -239,7 +301,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
     setView('interview');
     setIsStarted(true);
     setActiveInterview(interview);
-    await connectToLiveAPI(s, template.systemPrompt, template.title);
+    await connectToLiveAPI(s, template.systemPrompt, template.title, isResume);
   };
 
   const finishInterview = async () => {
@@ -271,7 +333,6 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
   const handleSendFeedback = () => {
     if (feedbackRating === 0) return;
     setFeedbackSubmitted(true);
-    // In a real app, we'd persist this feedback to a DB or Google Sheet via webhook
     console.log("Feedback submitted:", { rating: feedbackRating, comments: feedbackComments });
   };
 
@@ -298,7 +359,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
       role: job.title,
       status: 'PENDING',
       interviewDate: new Date().toISOString().split('T')[0],
-      profile: profileForm // Use the current profile state
+      profile: profileForm 
     };
 
     const db = localStorage.getItem(CANDIDATE_DB_KEY);
@@ -311,13 +372,11 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
 
   const handleSaveProfile = async () => {
     setIsSavingProfile(true);
-    // Simulation delay
     await new Promise(r => setTimeout(r, 800));
     
     const db = localStorage.getItem(CANDIDATE_DB_KEY);
     if (db) {
       const list: Candidate[] = JSON.parse(db);
-      // Update all applications by this user with the new profile data
       const updatedList = list.map(c => 
         c.email === user.email ? { ...c, profile: profileForm } : c
       );
@@ -339,6 +398,22 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
     setProfileForm({ ...profileForm, skills: profileForm.skills.filter(s => s !== skill) });
   };
 
+  const handleResumeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingResume(true);
+    // Simulate upload progress
+    await new Promise(r => setTimeout(r, 1500));
+    setUploadedResumeName(file.name);
+    setIsUploadingResume(false);
+  };
+
+  const clearInterviewState = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    window.location.reload();
+  };
+
   const getJobImage = (title: string) => {
     const images: Record<string, string> = {
       'Senior Frontend Developer': 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&q=80&w=800',
@@ -347,7 +422,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
     return images[title] || 'https://images.unsplash.com/photo-1486312338219-ce68d2c6f44d?auto=format&fit=crop&q=80&w=800';
   };
 
-  // --- Rendering States ---
+  // --- Rendering ---
 
   if (view === 'interview') {
     if (isFinished) return (
@@ -452,7 +527,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
               </div>
 
               <div className="pt-6">
-                <button onClick={() => window.location.reload()} className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xs uppercase tracking-[0.2em] hover:bg-slate-800 transition-all shadow-xl">
+                <button onClick={clearInterviewState} className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xs uppercase tracking-[0.2em] hover:bg-slate-800 transition-all shadow-xl">
                   Return to Dashboard
                 </button>
               </div>
@@ -484,6 +559,23 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
                  <h3 className="text-xl font-black text-white uppercase tracking-widest">Alex (AI Recruiter)</h3>
               </div>
             </div>
+            
+            {!isStarted && (
+              <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md flex flex-col items-center justify-center z-30 p-8 text-center">
+                <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center text-white mb-6 shadow-2xl shadow-indigo-600/40 animate-bounce">
+                  <Video className="w-10 h-10" />
+                </div>
+                <h3 className="text-2xl font-black text-white uppercase tracking-tight mb-2">Resume Session</h3>
+                <p className="text-slate-300 text-sm font-medium mb-8 max-w-xs">You have an ongoing interview for <strong>{activeInterview?.role}</strong>. Ready to continue?</p>
+                <button 
+                  onClick={() => activeInterview && startInterview(activeInterview, true)}
+                  className="px-12 py-5 bg-white text-slate-900 rounded-2xl font-black text-xs uppercase tracking-[0.2em] shadow-2xl hover:bg-indigo-50 transition-all active:scale-95"
+                >
+                  Join Live Room
+                </button>
+              </div>
+            )}
+
             <div className="absolute top-6 right-6 w-52 h-36 rounded-3xl overflow-hidden shadow-2xl border-4 border-white/10 bg-slate-800 group transition-all hover:scale-105">
               {cameraActive ? (
                 <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
@@ -550,10 +642,31 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
             <Sparkles className="w-6 h-6 text-indigo-400" />
             <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.3em]">Candidate Hub</span>
           </div>
-          <h2 className="text-4xl lg:text-5xl font-black text-white tracking-tight leading-tight">
-            Hi, {user.name.split(' ')[0]}. <br />
-            <span className="text-slate-400">Ready for your next big break?</span>
-          </h2>
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-8">
+            <div>
+              <h2 className="text-4xl lg:text-5xl font-black text-white tracking-tight leading-tight">
+                Hi, {user.name.split(' ')[0]}. <br />
+                <span className="text-slate-400">Ready for your next big break?</span>
+              </h2>
+            </div>
+            
+            {hasResumeData && (
+              <div className="bg-white/10 backdrop-blur-md border border-white/20 p-6 rounded-[2.5rem] flex flex-col items-center text-center max-w-sm animate-in zoom-in-95 duration-500 shadow-2xl">
+                <div className="w-12 h-12 bg-indigo-500 rounded-2xl flex items-center justify-center text-white mb-3">
+                  <Radio className="w-6 h-6 animate-pulse" />
+                </div>
+                <h4 className="text-sm font-black text-white uppercase tracking-widest">Interview in Progress</h4>
+                <p className="text-xs text-slate-400 font-medium mt-1 mb-4">You have an active session for <strong>{activeInterview?.role}</strong>.</p>
+                <button 
+                  onClick={() => setView('interview')}
+                  className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-indigo-600/30 hover:bg-indigo-500 transition-all flex items-center justify-center gap-2 group/resume"
+                >
+                  Resume Interview <ArrowRight className="w-4 h-4 group-hover/resume:translate-x-1 transition-transform" />
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-wrap gap-4 mt-10">
             <button 
               onClick={() => setActiveTab('jobs')}
@@ -656,7 +769,7 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
                     <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
                       interview.status === 'PENDING' ? 'bg-amber-100 text-amber-600' : 
                       interview.status === 'INTERVIEWING' ? 'bg-indigo-100 text-indigo-600 animate-pulse' :
-                      interview.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500'
+                      interview.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700 font-bold' : 'bg-slate-100 text-slate-500'
                     }`}>{interview.status}</span>
                   </div>
                   <div className="space-y-4 mb-10 flex-1">
@@ -776,6 +889,56 @@ const CandidatePanel: React.FC<CandidatePanelProps> = ({ user }) => {
                        placeholder="Write a brief summary of your expertise and goals..."
                        className="w-full h-40 bg-slate-50 border-none rounded-3xl px-6 py-5 text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none transition-all leading-relaxed"
                     />
+                 </div>
+
+                 {/* Resume Upload */}
+                 <div className="space-y-3">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                       <File className="w-3.5 h-3.5" /> Resume / CV
+                    </label>
+                    <div 
+                      className={`relative border-2 border-dashed rounded-[2rem] p-10 flex flex-col items-center justify-center transition-all cursor-pointer group ${
+                        uploadedResumeName ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/30'
+                      }`}
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        className="hidden" 
+                        accept=".pdf,.doc,.docx" 
+                        onChange={handleResumeUpload}
+                      />
+                      
+                      {isUploadingResume ? (
+                        <div className="flex flex-col items-center gap-3">
+                          <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
+                          <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Processing File...</p>
+                        </div>
+                      ) : uploadedResumeName ? (
+                        <div className="flex flex-col items-center gap-3 animate-in zoom-in-95">
+                          <div className="w-16 h-16 bg-emerald-500 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
+                            <CheckCircle2 className="w-8 h-8" />
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm font-black text-slate-900">{uploadedResumeName}</p>
+                            <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mt-1">Upload Successful</p>
+                          </div>
+                          <button className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-red-500 transition-colors mt-2" onClick={(e) => {
+                            e.stopPropagation();
+                            setUploadedResumeName(null);
+                          }}>Remove</button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center text-slate-400 shadow-sm border border-slate-100 group-hover:scale-110 group-hover:text-indigo-500 transition-all mb-4">
+                            <Upload className="w-8 h-8" />
+                          </div>
+                          <p className="text-sm font-black text-slate-900">Upload your Resume</p>
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">PDF, DOCX up to 10MB</p>
+                        </>
+                      )}
+                    </div>
                  </div>
 
                  {/* Skills Editor */}
