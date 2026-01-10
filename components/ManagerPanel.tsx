@@ -6,7 +6,7 @@ import {
   Trash2, Copy, PlayCircle, PauseCircle, StopCircle, 
   Signal, Target, Zap, Activity, Plus, Save, AlertCircle, PlusCircle, LayoutGrid, Layers, ListChecks,
   ShieldCheck, UserPlus, UserMinus, CheckCircle2, UserCheck, Video as VideoIcon, DoorOpen, LogIn, Phone, PhoneOff, Mic, MicOff, Camera, CameraOff, Send, Mail, SortAsc, CalendarDays, ExternalLink,
-  Clock as ClockIcon, CalendarPlus, Check, Loader2, Video, Edit3, Eye, EyeOff, UserX
+  Clock as ClockIcon, CalendarPlus, Check, Loader2, Video, Edit3, Eye, EyeOff, UserX, ImageIcon, Upload
 } from 'lucide-react';
 import { INITIAL_CANDIDATES, INITIAL_JOBS } from '../constants';
 import { Candidate, LiveCommand, JobTemplate } from '../types';
@@ -54,11 +54,14 @@ const ManagerPanel: React.FC = () => {
   const [isCloning, setIsCloning] = useState(false);
   const [newJob, setNewJob] = useState<Omit<JobTemplate, 'id' | 'createdAt'>>({
     title: '', description: '', systemPrompt: '', questions: ['', '', ''], requirements: [],
-    minExperience: 1, requiredSkills: [], educationRequirement: '', status: 'OPEN'
+    minExperience: 1, requiredSkills: [], educationRequirement: '', status: 'OPEN',
+    coverImageUrl: ''
   });
   const [skillInput, setSkillInput] = useState('');
   const [requirementInput, setRequirementInput] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isImageUploading, setIsImageUploading] = useState(false);
+  const jobCoverInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const load = () => {
@@ -128,7 +131,8 @@ const ManagerPanel: React.FC = () => {
     setIsCloning(false);
     setNewJob({ 
       title: '', description: '', systemPrompt: '', questions: ['', '', ''], requirements: [],
-      minExperience: 1, requiredSkills: [], educationRequirement: '', status: 'OPEN'
+      minExperience: 1, requiredSkills: [], educationRequirement: '', status: 'OPEN',
+      coverImageUrl: ''
     });
     setErrors({});
   };
@@ -143,7 +147,8 @@ const ManagerPanel: React.FC = () => {
       minExperience: job.minExperience,
       requiredSkills: [...job.requiredSkills],
       educationRequirement: job.educationRequirement,
-      status: job.status
+      status: job.status,
+      coverImageUrl: job.coverImageUrl || ''
     });
     setEditingJobId(job.id);
     setIsAddingJob(true);
@@ -160,7 +165,8 @@ const ManagerPanel: React.FC = () => {
       minExperience: job.minExperience,
       requiredSkills: [...job.requiredSkills],
       educationRequirement: job.educationRequirement,
-      status: 'DRAFT'
+      status: 'DRAFT',
+      coverImageUrl: job.coverImageUrl || ''
     });
     setEditingJobId(null);
     setIsAddingJob(true);
@@ -170,7 +176,8 @@ const ManagerPanel: React.FC = () => {
   const startNewVacancy = () => {
     setNewJob({ 
       title: '', description: '', systemPrompt: '', questions: ['', '', ''], requirements: [],
-      minExperience: 1, requiredSkills: [], educationRequirement: '', status: 'OPEN'
+      minExperience: 1, requiredSkills: [], educationRequirement: '', status: 'OPEN',
+      coverImageUrl: ''
     });
     setEditingJobId(null);
     setIsAddingJob(true);
@@ -191,6 +198,22 @@ const ManagerPanel: React.FC = () => {
       setJobs(updated);
       localStorage.setItem(JOBS_DB_KEY, JSON.stringify(updated));
     }
+  };
+
+  const handleCoverImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImageUploading(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      setTimeout(() => {
+        setNewJob(prev => ({ ...prev, coverImageUrl: base64 }));
+        setIsImageUploading(false);
+      }, 800); // Simulate processing
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleLiveCommand = (type: LiveCommand['type'], payload?: string) => {
@@ -434,7 +457,40 @@ const ManagerPanel: React.FC = () => {
                     </div>
                     <button onClick={() => { setIsAddingJob(false); setEditingJobId(null); setIsCloning(false); }} className="p-3 text-slate-400 hover:bg-slate-50 rounded-xl transition-all"><X /></button>
                   </div>
-                  <div className="space-y-6">
+                  <div className="space-y-8">
+                    {/* Cover Image Upload Area */}
+                    <div className="space-y-3">
+                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1 flex items-center gap-2">
+                          <ImageIcon className="w-3.5 h-3.5" /> Vacancy Cover Image
+                       </label>
+                       <div 
+                         onClick={() => jobCoverInputRef.current?.click()}
+                         className={`relative group/cover aspect-[21/9] rounded-[2.5rem] border-4 border-dashed transition-all overflow-hidden cursor-pointer flex flex-col items-center justify-center ${newJob.coverImageUrl ? 'border-emerald-100 bg-emerald-50' : 'border-slate-100 bg-slate-50 hover:bg-slate-100 hover:border-indigo-200'}`}
+                       >
+                          {isImageUploading ? (
+                            <div className="flex flex-col items-center gap-3">
+                               <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+                               <span className="text-[10px] font-black uppercase text-indigo-600">Processing Assets...</span>
+                            </div>
+                          ) : newJob.coverImageUrl ? (
+                            <>
+                              <img src={newJob.coverImageUrl} className="w-full h-full object-cover" alt="Cover Preview" />
+                              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover/cover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                                 <button onClick={(e) => { e.stopPropagation(); jobCoverInputRef.current?.click(); }} className="p-4 bg-white rounded-2xl text-slate-900 shadow-xl hover:scale-110 transition-transform"><Edit3 className="w-5 h-5" /></button>
+                                 <button onClick={(e) => { e.stopPropagation(); setNewJob(p => ({...p, coverImageUrl: ''})); }} className="p-4 bg-red-500 rounded-2xl text-white shadow-xl hover:scale-110 transition-transform"><Trash2 className="w-5 h-5" /></button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <Upload className="w-10 h-10 text-slate-300 mb-2 group-hover:text-indigo-400 group-hover:scale-110 transition-all" />
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest group-hover:text-indigo-600">Click to upload banner image</p>
+                              <p className="text-[8px] font-bold text-slate-300 uppercase mt-1">Recommended 1200x512px</p>
+                            </>
+                          )}
+                       </div>
+                       <input type="file" ref={jobCoverInputRef} onChange={handleCoverImageUpload} className="hidden" accept="image/*" />
+                    </div>
+
                     <div className="grid grid-cols-2 gap-6">
                       <div className="space-y-2">
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Job Title</label>
@@ -466,8 +522,17 @@ const ManagerPanel: React.FC = () => {
                       {jobs.map(job => (
                         <div key={job.id} className="p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-6 hover:bg-slate-50/50 transition-all group">
                           <div className="flex items-center gap-6">
-                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg transition-all ${job.status === 'OPEN' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-400'}`}>
-                              <Briefcase className="w-7 h-7" />
+                            <div className="relative">
+                              <div className={`w-20 h-20 rounded-2xl flex items-center justify-center shadow-lg transition-all overflow-hidden ${job.status === 'OPEN' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-400'}`}>
+                                {job.coverImageUrl ? (
+                                  <img src={job.coverImageUrl} className="w-full h-full object-cover" alt="Cover" />
+                                ) : (
+                                  <Briefcase className="w-8 h-8" />
+                                )}
+                              </div>
+                              {job.status === 'OPEN' && (
+                                <div className="absolute -top-2 -right-2 w-5 h-5 bg-emerald-500 rounded-full border-4 border-white animate-pulse" />
+                              )}
                             </div>
                             <div>
                               <h4 className="font-black text-slate-900 text-lg leading-tight">{job.title}</h4>
@@ -484,9 +549,9 @@ const ManagerPanel: React.FC = () => {
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <button onClick={() => handleEditJob(job)} className="p-3 bg-white border border-slate-100 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all"><Edit3 className="w-4 h-4" /></button>
-                            <button onClick={() => handleCloneJob(job)} className="p-3 bg-white border border-slate-100 rounded-xl text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-all"><Copy className="w-4 h-4" /></button>
-                            <button onClick={() => deleteJob(job.id)} className="p-3 bg-white border border-slate-100 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all"><Trash2 className="w-4 h-4" /></button>
+                            <button onClick={() => handleEditJob(job)} className="p-3 bg-white border border-slate-100 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all" title="Edit Vacancy"><Edit3 className="w-4 h-4" /></button>
+                            <button onClick={() => handleCloneJob(job)} className="p-3 bg-white border border-slate-100 rounded-xl text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-all" title="Clone Vacancy"><Copy className="w-4 h-4" /></button>
+                            <button onClick={() => deleteJob(job.id)} className="p-3 bg-white border border-slate-100 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all" title="Archive Vacancy"><Trash2 className="w-4 h-4" /></button>
                           </div>
                         </div>
                       ))}
@@ -563,8 +628,8 @@ const ManagerPanel: React.FC = () => {
                      <td className="px-8 py-6 text-center font-black text-xs text-indigo-600">{c.matchScore ? `${c.matchScore}%` : '--'}</td>
                      <td className="px-8 py-6 text-right">
                         <div className="flex items-center justify-end gap-2">
-                           <button onClick={() => setCandidateToSchedule(c)} className="p-3 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded-2xl transition-all"><CalendarPlus className="w-5 h-5" /></button>
-                           <button onClick={() => { setSelectedCandidate(c); setDetailTab('assessment'); }} className="p-3 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-2xl transition-all"><ArrowUpRight className="w-5 h-5" /></button>
+                           <button onClick={() => setCandidateToSchedule(c)} className="p-3 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded-2xl transition-all" title="Schedule Bridge"><CalendarPlus className="w-5 h-5" /></button>
+                           <button onClick={() => { setSelectedCandidate(c); setDetailTab('assessment'); }} className="p-3 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-2xl transition-all" title="Deep Evaluation"><ArrowUpRight className="w-5 h-5" /></button>
                         </div>
                      </td>
                    </tr>
@@ -585,15 +650,15 @@ const ManagerPanel: React.FC = () => {
       {/* QUICK SCHEDULE OVERLAY */}
       {candidateToSchedule && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm">
-           <div className="bg-white w-full max-w-md rounded-[3rem] shadow-2xl p-10">
+           <div className="bg-white w-full max-w-md rounded-[3rem] shadow-2xl p-10 animate-in zoom-in-95">
               <div className="flex justify-between items-start mb-8">
                  <h3 className="text-2xl font-black text-slate-900 tracking-tight">Bridge Scheduling</h3>
-                 <button onClick={() => setCandidateToSchedule(null)} className="p-3 text-slate-300 hover:bg-slate-50 rounded-xl transition-all"><X /></button>
+                 <button onClick={() => setCandidateToSchedule(null)} className="p-3 text-slate-400 hover:bg-slate-50 rounded-xl transition-all"><X /></button>
               </div>
               <div className="space-y-6">
                  <input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="w-full bg-slate-50 border-none rounded-2xl p-4 text-sm font-bold outline-none" />
                  <input type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} className="w-full bg-slate-50 border-none rounded-2xl p-4 text-sm font-bold outline-none" />
-                 <button onClick={handleConfirmSchedule} className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black text-xs uppercase shadow-xl hover:bg-blue-700 disabled:opacity-50">
+                 <button onClick={handleConfirmSchedule} className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black text-xs uppercase shadow-xl hover:bg-blue-700 disabled:opacity-50 transition-all">
                     {isSchedulingLoading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : 'Confirm Slot'}
                  </button>
               </div>
@@ -604,7 +669,7 @@ const ManagerPanel: React.FC = () => {
       {/* Candidate Detail Modal */}
       {selectedCandidate && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
-          <div className="bg-white w-full max-w-5xl rounded-[3.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="bg-white w-full max-w-5xl rounded-[3.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95">
             <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
                <div className="flex items-center gap-6">
                    <div className="w-16 h-16 rounded-[2rem] bg-indigo-600 text-white flex items-center justify-center text-2xl font-black">{selectedCandidate.name.charAt(0)}</div>
@@ -661,25 +726,30 @@ const ManagerPanel: React.FC = () => {
                )}
                {detailTab === 'live' && (
                  <div className="space-y-8">
-                    <div className="bg-slate-900 rounded-[2.5rem] p-10 text-white relative border-4 border-slate-800 shadow-xl">
-                        <div className="flex items-center justify-between mb-8">
-                           <div className="flex items-center gap-3"><div className={`w-3 h-3 rounded-full ${selectedCandidate.status === 'INTERVIEWING' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-700'}`} /><h4 className="text-xs font-black uppercase tracking-widest">Protocol Stream</h4></div>
+                    <div className="bg-slate-900 rounded-[2.5rem] p-10 text-white relative border-4 border-slate-800 shadow-xl overflow-hidden">
+                        <div className="absolute top-0 right-0 p-8 opacity-5"><Signal className="w-48 h-48" /></div>
+                        <div className="relative z-10">
+                          <div className="flex items-center justify-between mb-8">
+                            <div className="flex items-center gap-3"><div className={`w-3 h-3 rounded-full ${selectedCandidate.status === 'INTERVIEWING' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-700'}`} /><h4 className="text-xs font-black uppercase tracking-widest">Protocol Stream</h4></div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <button onClick={() => handleLiveCommand(selectedCandidate.status === 'INTERVIEWING' ? 'PAUSE' : 'RESUME')} className="py-4 bg-white/5 border border-white/10 rounded-2xl font-black text-[9px] uppercase hover:bg-white/10 transition-all">
+                                {selectedCandidate.status === 'INTERVIEWING' ? 'Pause Agent' : 'Resume Agent'}
+                            </button>
+                            <button onClick={() => handleLiveCommand('STOP')} className="py-4 bg-red-500 text-white rounded-2xl font-black text-[9px] uppercase hover:bg-red-600 shadow-xl transition-all">Abort Protocol</button>
+                          </div>
+                          <button onClick={() => startMeeting(selectedCandidate)} className="w-full mt-4 py-6 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-blue-700 flex items-center justify-center gap-2 transition-all active:scale-[0.98]"><VideoIcon className="w-4 h-4" /> Start Direct Zoom Bridge</button>
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
-                           <button onClick={() => handleLiveCommand(selectedCandidate.status === 'INTERVIEWING' ? 'PAUSE' : 'RESUME')} className="py-4 bg-white/5 border border-white/10 rounded-2xl font-black text-[9px] uppercase hover:bg-white/10 transition-all">
-                              {selectedCandidate.status === 'INTERVIEWING' ? 'Pause Agent' : 'Resume Agent'}
-                           </button>
-                           <button onClick={() => handleLiveCommand('STOP')} className="py-4 bg-red-500 text-white rounded-2xl font-black text-[9px] uppercase hover:bg-red-600 shadow-xl">Abort Protocol</button>
-                        </div>
-                        <button onClick={() => startMeeting(selectedCandidate)} className="w-full mt-4 py-6 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-blue-700 flex items-center justify-center gap-2"><VideoIcon className="w-4 h-4" /> Start Direct Zoom Bridge</button>
                     </div>
                  </div>
                )}
                {detailTab === 'assessment' && (
-                  <div className="space-y-8">
+                  <div className="space-y-8 animate-in slide-in-from-bottom-4">
                     <div className="p-10 bg-indigo-50 border border-indigo-100 rounded-[3rem]">
-                       <h4 className="text-xl font-black text-indigo-900 tracking-tight mb-4">Synthesis</h4>
-                       <p className="text-sm text-indigo-700/80 font-medium leading-relaxed">{selectedCandidate.summary || "Pending final evaluation log..."}</p>
+                       <h4 className="text-xl font-black text-indigo-900 tracking-tight mb-4 flex items-center gap-3">
+                          <Target className="w-6 h-6" /> Synthesis
+                       </h4>
+                       <p className="text-sm text-indigo-700/80 font-medium leading-relaxed">{selectedCandidate.summary || "Pending final evaluation log from Alex..."}</p>
                     </div>
                   </div>
                )}
@@ -690,18 +760,18 @@ const ManagerPanel: React.FC = () => {
 
       {/* FLOATING ZOOM BRIDGE */}
       {activeMeetingCandId && (
-        <div className="fixed bottom-6 right-6 w-80 bg-slate-900 rounded-[2.5rem] shadow-2xl border-4 border-slate-800 z-[999] overflow-hidden">
+        <div className="fixed bottom-6 right-6 w-80 bg-slate-900 rounded-[2.5rem] shadow-2xl border-4 border-slate-800 z-[999] overflow-hidden animate-in slide-in-from-right-8">
            <div className="p-4 border-b border-white/5 flex items-center justify-between bg-blue-600/10">
               <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Active Bridge</span>
               <button onClick={endMeeting} className="p-1.5 text-slate-400 hover:text-white transition-all"><X className="w-4 h-4" /></button>
            </div>
            <div className="aspect-video bg-black relative">
-              {isCameraOff ? <div className="absolute inset-0 flex items-center justify-center bg-slate-800 text-white font-black">Cam Off</div> : <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />}
+              {isCameraOff ? <div className="absolute inset-0 flex items-center justify-center bg-slate-800 text-white font-black text-xs uppercase tracking-widest">Cam Off</div> : <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />}
            </div>
            <div className="p-6 flex justify-center gap-4 border-t border-white/5">
-              <button onClick={() => setIsMicMuted(!isMicMuted)} className={`p-3 rounded-2xl ${isMicMuted ? 'bg-red-500 text-white' : 'bg-white/10 text-white'}`}>{isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}</button>
-              <button onClick={() => setIsCameraOff(!isCameraOff)} className={`p-3 rounded-2xl ${isCameraOff ? 'bg-red-500 text-white' : 'bg-white/10 text-white'}`}>{isCameraOff ? <CameraOff className="w-4 h-4" /> : <Camera className="w-4 h-4" />}</button>
-              <button onClick={endMeeting} className="p-3 bg-red-500 text-white rounded-2xl"><PhoneOff className="w-4 h-4" /></button>
+              <button onClick={() => setIsMicMuted(!isMicMuted)} className={`p-3 rounded-2xl transition-all ${isMicMuted ? 'bg-red-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}>{isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}</button>
+              <button onClick={() => setIsCameraOff(!isCameraOff)} className={`p-3 rounded-2xl transition-all ${isCameraOff ? 'bg-red-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}>{isCameraOff ? <CameraOff className="w-4 h-4" /> : <Camera className="w-4 h-4" />}</button>
+              <button onClick={endMeeting} className="p-3 bg-red-500 text-white rounded-2xl hover:bg-red-600 transition-all"><PhoneOff className="w-4 h-4" /></button>
            </div>
         </div>
       )}

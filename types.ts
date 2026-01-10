@@ -95,6 +95,7 @@ export interface JobTemplate {
   minExperience: number;
   requiredSkills: string[];
   educationRequirement: string;
+  coverImageUrl?: string;
   // Metadata for Job Posting System
   status: 'OPEN' | 'CLOSED' | 'DRAFT';
   createdAt: string;
