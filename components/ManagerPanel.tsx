@@ -1,674 +1,712 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Search, Filter, TrendingUp, Users, CheckCircle, Clock, ArrowUpRight, X, Brain, 
-  Send, Star, FileCheck, ThumbsUp, ThumbsDown, MessageSquare, Target, ChevronRight, 
-  ShieldCheck, Radio, Cpu, ArrowUpDown, ArrowUp, ArrowDown, AlertCircle, BarChart3,
-  Calendar, Video, FileText, Download, Play, Pause, Volume2, Maximize, UserCheck, 
-  Settings2, MoreHorizontal, History, Eye, Plus, Trash2, UserPlus, Clock4, ClipboardList
+  Search, Users, ArrowUpRight, X, Brain, Radio, Cpu, 
+  BarChart3, Briefcase, RefreshCw, 
+  Trash2, Copy, PlayCircle, PauseCircle, StopCircle, 
+  Signal, Target, Zap, Activity, Plus, Save, AlertCircle, PlusCircle, LayoutGrid, Layers, ListChecks,
+  ShieldCheck, UserPlus, UserMinus, CheckCircle2, UserCheck, Video as VideoIcon, DoorOpen, LogIn, Phone, PhoneOff, Mic, MicOff, Camera, CameraOff, Send, Mail, SortAsc, CalendarDays, ExternalLink,
+  Clock as ClockIcon, CalendarPlus, Check, Loader2, Video, Edit3, Eye, EyeOff, UserX
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { INITIAL_CANDIDATES } from '../constants';
-import { Candidate, ManagerAssessment } from '../types';
+import { INITIAL_CANDIDATES, INITIAL_JOBS } from '../constants';
+import { Candidate, LiveCommand, JobTemplate } from '../types';
 import ReportingSystem from './ReportingSystem';
+import { processJobAlerts, sendEmailNotification } from '../services/notificationService';
 
 const CANDIDATE_DB_KEY = 'hirestream_candidates_db';
+const JOBS_DB_KEY = 'hirestream_jobs_db';
 
-type SortConfig = {
-  key: keyof Candidate;
-  direction: 'asc' | 'desc';
-} | null;
+const AVAILABLE_BOARD_MEMBERS = [
+  { id: 'bm-1', name: 'Marcus Board Member', email: 'board@hirestream.ai' },
+  { id: 'bm-2', name: 'Elena Strategy', email: 'elena@hirestream.ai' },
+  { id: 'bm-3', name: 'David Technical', email: 'david@hirestream.ai' },
+  { id: 'bm-4', name: 'Sarah Executive', email: 'sarah@hirestream.ai' }
+];
+
+type ViewType = 'pipeline' | 'jobs' | 'reports' | 'meetings';
+type SortOption = 'name' | 'status' | 'matchScore' | 'score' | 'date';
 
 const ManagerPanel: React.FC = () => {
-  const [activeView, setActiveView] = useState<'pipeline' | 'reports'>('pipeline');
+  const [activeView, setActiveView] = useState<ViewType>('pipeline');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [jobs, setJobs] = useState<JobTemplate[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
-  const [detailTab, setDetailTab] = useState<'assessment' | 'logistics' | 'recording' | 'cv'>('assessment');
-  const [sortConfig, setSortConfig] = useState<SortConfig>(null);
+  const [detailTab, setDetailTab] = useState<'assessment' | 'live' | 'oversight'>('assessment');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortBy, setSortBy] = useState<SortOption>('date');
   
-  // Recording State
-  const [isPlaying, setIsPlaying] = useState(false);
-  
-  // Logistics State
-  const [editDate, setEditDate] = useState('');
-  const [editTime, setEditTime] = useState('');
-  const [newBoardMember, setNewBoardMember] = useState('');
+  // Meeting State
+  const [activeMeetingCandId, setActiveMeetingCandId] = useState<string | null>(null);
+  const [isMicMuted, setIsMicMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const [meetingStream, setMeetingStream] = useState<MediaStream | null>(null);
 
-  const [assessment, setAssessment] = useState<Partial<ManagerAssessment>>({
-    score: 80,
-    comments: '',
-    recommendation: 'HIRE'
+  // Scheduling State
+  const [candidateToSchedule, setCandidateToSchedule] = useState<Candidate | null>(null);
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('');
+  const [isSchedulingLoading, setIsSchedulingLoading] = useState(false);
+
+  // Job Creation/Edit State
+  const [isAddingJob, setIsAddingJob] = useState(false);
+  const [editingJobId, setEditingJobId] = useState<string | null>(null);
+  const [isCloning, setIsCloning] = useState(false);
+  const [newJob, setNewJob] = useState<Omit<JobTemplate, 'id' | 'createdAt'>>({
+    title: '', description: '', systemPrompt: '', questions: ['', '', ''], requirements: [],
+    minExperience: 1, requiredSkills: [], educationRequirement: '', status: 'OPEN'
   });
-  const [gradingErrors, setGradingErrors] = useState<{ comments?: string; score?: string }>({});
+  const [skillInput, setSkillInput] = useState('');
+  const [requirementInput, setRequirementInput] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    const saved = localStorage.getItem(CANDIDATE_DB_KEY);
-    if (saved) {
-      setCandidates(JSON.parse(saved));
-    } else {
-      setCandidates(INITIAL_CANDIDATES);
-      localStorage.setItem(CANDIDATE_DB_KEY, JSON.stringify(INITIAL_CANDIDATES));
-    }
+    const load = () => {
+      // Candidates Load
+      const savedCand = localStorage.getItem(CANDIDATE_DB_KEY);
+      if (savedCand) {
+        setCandidates(JSON.parse(savedCand));
+      } else {
+        setCandidates(INITIAL_CANDIDATES);
+        localStorage.setItem(CANDIDATE_DB_KEY, JSON.stringify(INITIAL_CANDIDATES));
+      }
+
+      // Jobs Load
+      const savedJobs = localStorage.getItem(JOBS_DB_KEY);
+      if (savedJobs) {
+        setJobs(JSON.parse(savedJobs));
+      } else {
+        setJobs(INITIAL_JOBS);
+        localStorage.setItem(JOBS_DB_KEY, JSON.stringify(INITIAL_JOBS));
+      }
+    };
+    load();
+    const interval = setInterval(load, 2000);
+    return () => clearInterval(interval);
   }, []);
 
-  // Sync assessment form with selected candidate
-  useEffect(() => {
-    if (selectedCandidate) {
-      if (selectedCandidate.managerAssessment) {
-        setAssessment(selectedCandidate.managerAssessment);
-      } else {
-        setAssessment({
-          score: 80,
-          comments: '',
-          recommendation: 'HIRE'
-        });
-      }
-      setEditDate(selectedCandidate.interviewDate || '');
-      setEditTime(selectedCandidate.interviewTime || '09:00');
-      setIsPlaying(false);
-    }
-  }, [selectedCandidate]);
-
-  const handleSort = (key: keyof Candidate) => {
-    let direction: 'asc' | 'desc' = 'asc';
-    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
-      direction = 'desc';
-    }
-    setSortConfig({ key, direction });
+  const validateJob = () => {
+    const e: Record<string, string> = {};
+    if (!newJob.title.trim() || newJob.title.length < 5) e.title = 'Title min 5 chars.';
+    if (!newJob.systemPrompt.trim() || newJob.systemPrompt.length < 50) e.systemPrompt = 'Prompt min 50 chars.';
+    if (newJob.requiredSkills.length === 0) e.requiredSkills = 'Add at least one skill.';
+    if (newJob.requirements.length === 0) e.requirements = 'Add at least one requirement.';
+    setErrors(e);
+    return Object.keys(e).length === 0;
   };
 
-  const sortedCandidates = useMemo(() => {
-    let sortableCandidates = [...candidates];
-    if (sortConfig !== null) {
-      sortableCandidates.sort((a, b) => {
-        const aValue = a[sortConfig.key];
-        const bValue = b[sortConfig.key];
-        if (aValue === undefined || aValue === null) return 1;
-        if (bValue === undefined || bValue === null) return -1;
-        if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-        if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-        return 0;
-      });
-    }
-    return sortableCandidates;
-  }, [candidates, sortConfig]);
+  const handleSaveJob = async () => {
+    if (!validateJob()) return;
 
-  const updateCandidate = (updated: Candidate) => {
+    let updatedJobs: JobTemplate[];
+
+    if (editingJobId) {
+      updatedJobs = jobs.map(j => j.id === editingJobId ? {
+        ...j,
+        ...newJob,
+        questions: newJob.questions.filter(q => q.trim() !== ''),
+        requirements: newJob.requirements.filter(r => r.trim() !== '')
+      } : j);
+    } else {
+      const template: JobTemplate = {
+        ...newJob,
+        id: `tmpl-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+        applicantCount: 0,
+        questions: newJob.questions.filter(q => q.trim() !== ''),
+        requirements: newJob.requirements.filter(r => r.trim() !== '')
+      } as JobTemplate;
+      updatedJobs = [...jobs, template];
+      await processJobAlerts(template);
+    }
+    
+    setJobs(updatedJobs);
+    localStorage.setItem(JOBS_DB_KEY, JSON.stringify(updatedJobs));
+    
+    setIsAddingJob(false);
+    setEditingJobId(null);
+    setIsCloning(false);
+    setNewJob({ 
+      title: '', description: '', systemPrompt: '', questions: ['', '', ''], requirements: [],
+      minExperience: 1, requiredSkills: [], educationRequirement: '', status: 'OPEN'
+    });
+    setErrors({});
+  };
+
+  const handleEditJob = (job: JobTemplate) => {
+    setNewJob({
+      title: job.title,
+      description: job.description,
+      systemPrompt: job.systemPrompt,
+      questions: job.questions.length > 0 ? [...job.questions] : ['', '', ''],
+      requirements: [...job.requirements],
+      minExperience: job.minExperience,
+      requiredSkills: [...job.requiredSkills],
+      educationRequirement: job.educationRequirement,
+      status: job.status
+    });
+    setEditingJobId(job.id);
+    setIsAddingJob(true);
+    setIsCloning(false);
+  };
+
+  const handleCloneJob = (job: JobTemplate) => {
+    setNewJob({
+      title: `${job.title} (Clone)`,
+      description: job.description,
+      systemPrompt: job.systemPrompt,
+      questions: [...job.questions],
+      requirements: [...job.requirements],
+      minExperience: job.minExperience,
+      requiredSkills: [...job.requiredSkills],
+      educationRequirement: job.educationRequirement,
+      status: 'DRAFT'
+    });
+    setEditingJobId(null);
+    setIsAddingJob(true);
+    setIsCloning(true);
+  };
+
+  const startNewVacancy = () => {
+    setNewJob({ 
+      title: '', description: '', systemPrompt: '', questions: ['', '', ''], requirements: [],
+      minExperience: 1, requiredSkills: [], educationRequirement: '', status: 'OPEN'
+    });
+    setEditingJobId(null);
+    setIsAddingJob(true);
+    setIsCloning(false);
+    setErrors({});
+  };
+
+  const toggleJobStatus = (job: JobTemplate) => {
+    const newStatus = job.status === 'OPEN' ? 'CLOSED' : 'OPEN';
+    const updated = jobs.map(j => j.id === job.id ? { ...j, status: newStatus } : j);
+    setJobs(updated as JobTemplate[]);
+    localStorage.setItem(JOBS_DB_KEY, JSON.stringify(updated));
+  };
+
+  const deleteJob = (id: string) => {
+    if (window.confirm('Delete this vacancy? This will remove all associated applicant metrics.')) {
+      const updated = jobs.filter(j => j.id !== id);
+      setJobs(updated);
+      localStorage.setItem(JOBS_DB_KEY, JSON.stringify(updated));
+    }
+  };
+
+  const handleLiveCommand = (type: LiveCommand['type'], payload?: string) => {
+    if (!selectedCandidate) return;
+    const updated: Candidate = {
+      ...selectedCandidate,
+      lastCommand: { type, payload, timestamp: new Date().toISOString() },
+      status: type === 'START' ? 'INTERVIEWING' : type === 'STOP' ? 'COMPLETED' : type === 'PAUSE' ? 'PAUSED' : type === 'RESUME' ? 'INTERVIEWING' : selectedCandidate.status
+    };
+    saveCandidate(updated);
+  };
+
+  const admitBoardMember = (name: string) => {
+    if (!selectedCandidate) return;
+    const currentAdmitted = selectedCandidate.boardMembers || [];
+    const currentRequested = selectedCandidate.requestedBoardMembers || [];
+    
+    const updated: Candidate = {
+      ...selectedCandidate,
+      requestedBoardMembers: currentRequested.filter(n => n !== name),
+      boardMembers: Array.from(new Set([...currentAdmitted, name]))
+    };
+    saveCandidate(updated);
+  };
+
+  const denyBoardMember = (name: string) => {
+    if (!selectedCandidate) return;
+    const currentRequested = selectedCandidate.requestedBoardMembers || [];
+    const updated: Candidate = {
+      ...selectedCandidate,
+      requestedBoardMembers: currentRequested.filter(n => n !== name)
+    };
+    saveCandidate(updated);
+  };
+
+  const toggleManagerJoin = () => {
+    if (!selectedCandidate) return;
+    const updated: Candidate = {
+      ...selectedCandidate,
+      isManagerJoined: !selectedCandidate.isManagerJoined
+    };
+    saveCandidate(updated);
+  };
+
+  // Video Call Features (Simulated Zoom)
+  const startMeeting = async (candidate: Candidate) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setMeetingStream(stream);
+      setTimeout(() => {
+        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      }, 150);
+      
+      const zoomId = Math.floor(Math.random() * 1000000000).toString().replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3');
+      const updated: Candidate = {
+        ...candidate,
+        activeMeetingRoom: `zoom-room-${zoomId}`,
+        meetingParticipants: ['Hiring Manager (Host)']
+      };
+      saveCandidate(updated);
+      setActiveMeetingCandId(candidate.id);
+      
+      const subj = `Instant Zoom Invitation: ${candidate.role} Interview`;
+      const msg = `Hello ${candidate.name}, the Hiring Manager has initiated a live video session. Join the Zoom bridge now via your HireStream portal dashboard.`;
+      await sendEmailNotification(candidate.email, subj, msg);
+    } catch (err) {
+      alert("Microphone and Camera access is required to use the video bridge features.");
+    }
+  };
+
+  const endMeeting = () => {
+    if (meetingStream) {
+      meetingStream.getTracks().forEach(track => track.stop());
+      setMeetingStream(null);
+    }
+    if (activeMeetingCandId) {
+      const cand = candidates.find(c => c.id === activeMeetingCandId);
+      if (cand) {
+        const updated: Candidate = { ...cand, activeMeetingRoom: undefined, meetingParticipants: [] };
+        saveCandidate(updated);
+      }
+    }
+    setActiveMeetingCandId(null);
+  };
+
+  const handleConfirmSchedule = async () => {
+    if (!candidateToSchedule || !scheduleDate || !scheduleTime) return;
+    setIsSchedulingLoading(true);
+
+    const updated: Candidate = {
+      ...candidateToSchedule,
+      interviewDate: scheduleDate,
+      interviewTime: scheduleTime,
+      status: 'PENDING'
+    };
+
+    saveCandidate(updated);
+
+    const subject = `Confirmed: Zoom Interview - ${updated.role}`;
+    const body = `Hi ${updated.name},\n\nYour interview has been scheduled for ${scheduleDate} at ${scheduleTime} (GMT-5).\n\nBest,\nHiring Team`;
+    await sendEmailNotification(updated.email, subject, body);
+
+    setIsSchedulingLoading(false);
+    setCandidateToSchedule(null);
+    setScheduleDate('');
+    setScheduleTime('');
+  };
+
+  const saveCandidate = (updated: Candidate) => {
     const newList = candidates.map(c => c.id === updated.id ? updated : c);
     setCandidates(newList);
     localStorage.setItem(CANDIDATE_DB_KEY, JSON.stringify(newList));
-    setSelectedCandidate(updated);
+    if (selectedCandidate?.id === updated.id) setSelectedCandidate(updated);
   };
 
-  const handleSaveLogistics = () => {
-    if (!selectedCandidate) return;
-    const updated = { 
-      ...selectedCandidate, 
-      interviewDate: editDate,
-      interviewTime: editTime
-    };
-    updateCandidate(updated);
+  const getSortedCandidates = () => {
+    return [...candidates].sort((a, b) => {
+      switch (sortBy) {
+        case 'name': return a.name.localeCompare(b.name);
+        case 'status': return a.status.localeCompare(b.status);
+        case 'matchScore': return (b.matchScore || 0) - (a.matchScore || 0);
+        case 'score': return (b.score || 0) - (a.score || 0);
+        case 'date': return new Date(b.interviewDate).getTime() - new Date(a.interviewDate).getTime();
+        default: return 0;
+      }
+    });
   };
 
-  const handleAddBoardMember = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCandidate || !newBoardMember.trim()) return;
-    const currentBoard = selectedCandidate.boardMembers || [];
-    if (currentBoard.includes(newBoardMember.trim())) return;
-    
-    const updated = {
-      ...selectedCandidate,
-      boardMembers: [...currentBoard, newBoardMember.trim()]
-    };
-    updateCandidate(updated);
-    setNewBoardMember('');
-  };
+  const filteredCandidates = getSortedCandidates().filter(c => 
+    c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    c.role.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
-  const handleRemoveBoardMember = (member: string) => {
-    if (!selectedCandidate) return;
-    const updated = {
-      ...selectedCandidate,
-      boardMembers: (selectedCandidate.boardMembers || []).filter(m => m !== member)
-    };
-    updateCandidate(updated);
-  };
-
-  const toggleCVReviewed = () => {
-    if (!selectedCandidate) return;
-    const updated = { ...selectedCandidate, cvReviewed: !selectedCandidate.cvReviewed };
-    updateCandidate(updated);
-  };
-
-  const submitGrading = () => {
-    if (!selectedCandidate) return;
-    const errors: { comments?: string; score?: string } = {};
-    if (!assessment.comments?.trim()) errors.comments = 'Feedback comments are required.';
-    if (assessment.score === undefined || assessment.score < 0 || assessment.score > 100) errors.score = 'Invalid score.';
-
-    if (Object.keys(errors).length > 0) {
-      setGradingErrors(errors);
-      return;
-    }
-
-    const updated = {
-      ...selectedCandidate,
-      status: (assessment.recommendation === 'HIRE' ? 'SHORTLISTED' : assessment.recommendation === 'REJECT' ? 'REJECTED' : 'COMPLETED') as any,
-      managerAssessment: assessment as ManagerAssessment
-    };
-    updateCandidate(updated);
-    setGradingErrors({});
-  };
-
-  const SortIcon = ({ column }: { column: keyof Candidate }) => {
-    if (!sortConfig || sortConfig.key !== column) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-30" />;
-    return sortConfig.direction === 'asc' ? <ArrowUp className="w-3 h-3 ml-1 text-indigo-600" /> : <ArrowDown className="w-3 h-3 ml-1 text-indigo-600" />;
-  };
+  const totalCandidatesCount = candidates.length || 1;
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="flex justify-between items-end">
+    <div className="space-y-8 animate-in fade-in duration-500 pb-32">
+      {/* View Selector Header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
-          <h2 className="text-3xl font-black text-slate-900 tracking-tight">Manager Dashboard</h2>
-          <p className="text-slate-500 font-medium">Coordinate talent reviews and performance tracking</p>
+          <h2 className="text-4xl font-black text-slate-900 tracking-tight leading-none">Operations Desk</h2>
+          <p className="text-slate-500 font-medium mt-2">Real-time pipeline monitoring & role scaling</p>
         </div>
-        <div className="flex bg-white p-1 rounded-2xl border border-slate-200 shadow-sm">
-          <button 
-            onClick={() => setActiveView('pipeline')}
-            className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeView === 'pipeline' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-slate-600'}`}
-          >
-            Pipeline
-          </button>
-          <button 
-            onClick={() => setActiveView('reports')}
-            className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${activeView === 'reports' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-slate-600'}`}
-          >
-            Reports
-          </button>
+        <div className="flex bg-white p-1 rounded-2xl border border-slate-200 shadow-sm w-full md:w-auto overflow-x-auto">
+          {[
+            { id: 'pipeline', label: 'Pipeline', icon: Users },
+            { id: 'meetings', label: 'Zoom Center', icon: VideoIcon },
+            { id: 'jobs', label: 'Job Board', icon: Briefcase },
+            { id: 'reports', label: 'Analytics', icon: BarChart3 }
+          ].map(view => (
+            <button 
+              key={view.id} 
+              onClick={() => setActiveView(view.id as ViewType)} 
+              className={`px-8 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 whitespace-nowrap ${activeView === view.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-slate-400 hover:text-slate-600'}`}
+            >
+              <view.icon className="w-4 h-4" /> {view.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {activeView === 'reports' ? (
-        <ReportingSystem />
-      ) : (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard icon={<Users className="text-blue-600"/>} label="Total Pipeline" value={candidates.length.toString()} color="bg-blue-50" />
-            <StatCard icon={<Clock className="text-amber-600"/>} label="Live Sessions" value={candidates.filter(c => c.status === 'INTERVIEWING').length.toString()} color="bg-amber-50" />
-            <StatCard icon={<CheckCircle className="text-emerald-600"/>} label="Ready for Review" value={candidates.filter(c => c.status === 'COMPLETED').length.toString()} color="bg-emerald-50" />
-            <StatCard icon={<BarChart3 className="text-indigo-600"/>} label="Conv. Rate" value="28%" color="bg-indigo-50" />
-          </div>
-
-          <div className="bg-white rounded-[2.5rem] border border-slate-200 overflow-hidden shadow-sm">
-            <div className="p-8 border-b border-slate-100 flex justify-between items-center">
-              <div>
-                <h3 className="font-black text-slate-900 tracking-tight uppercase">Talent Control Center</h3>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Manage Candidate Life Cycle</p>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="bg-slate-50/50 text-slate-400 text-[10px] uppercase font-bold tracking-[0.15em]">
-                    <th className="px-8 py-4 cursor-pointer hover:bg-slate-100/50" onClick={() => handleSort('name')}>Participant <SortIcon column="name" /></th>
-                    <th className="px-8 py-4 cursor-pointer hover:bg-slate-100/50" onClick={() => handleSort('interviewDate')}>Scheduled Date <SortIcon column="interviewDate" /></th>
-                    <th className="px-8 py-4 text-center cursor-pointer hover:bg-slate-100/50" onClick={() => handleSort('status')}>Status <SortIcon column="status" /></th>
-                    <th className="px-8 py-4 text-center cursor-pointer hover:bg-slate-100/50" onClick={() => handleSort('score')}>AI Rating <SortIcon column="score" /></th>
-                    <th className="px-8 py-4 text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {sortedCandidates.map((candidate) => (
-                    <tr key={candidate.id} className="hover:bg-slate-50/50 transition-colors group">
-                      <td className="px-8 py-6">
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-sm">{candidate.name.charAt(0)}</div>
-                          <div>
-                            <p className="font-bold text-slate-900 text-sm">{candidate.name}</p>
-                            <p className="text-[10px] text-slate-400 font-medium">{candidate.role}</p>
+      {/* 1. Zoom Center View */}
+      {activeView === 'meetings' && (
+        <div className="space-y-8 animate-in slide-in-from-bottom-4">
+           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="md:col-span-2 space-y-6">
+                 <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
+                       <h3 className="text-xs font-black uppercase tracking-widest text-slate-900 flex items-center gap-2">
+                          <VideoIcon className="w-4 h-4 text-blue-500" /> Active & Planned Zoom Sessions
+                       </h3>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                       {candidates.filter(c => c.status !== 'REJECTED' && c.status !== 'COMPLETED').map(c => (
+                          <div key={c.id} className="p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-6 hover:bg-slate-50/30 transition-all group">
+                             <div className="flex items-center gap-6">
+                                <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 font-black">
+                                   {c.name.charAt(0)}
+                                </div>
+                                <div>
+                                   <h4 className="font-black text-slate-900 text-sm leading-none">{c.name}</h4>
+                                   <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">{c.role}</p>
+                                   <div className="flex items-center gap-3 mt-3">
+                                      <div className="flex items-center gap-1.5"><CalendarDays className="w-3 h-3 text-indigo-500" /><span className="text-[9px] font-black text-slate-500 uppercase">{c.interviewDate}</span></div>
+                                      <div className="flex items-center gap-1.5"><ClockIcon className="w-3 h-3 text-slate-300" /><span className="text-[9px] font-bold text-slate-400 uppercase">{c.interviewTime || 'TBD'}</span></div>
+                                   </div>
+                                </div>
+                             </div>
+                             <div className="flex items-center gap-2">
+                                <button 
+                                  onClick={() => activeMeetingCandId === c.id ? endMeeting() : startMeeting(c)}
+                                  className={`px-6 py-3 rounded-xl font-black text-[9px] uppercase tracking-widest transition-all flex items-center gap-2 ${activeMeetingCandId === c.id ? 'bg-red-500 text-white shadow-lg shadow-red-500/20' : 'bg-blue-600 text-white shadow-lg shadow-blue-600/20 hover:bg-blue-700'}`}
+                                >
+                                   {activeMeetingCandId === c.id ? <PhoneOff className="w-3.5 h-3.5" /> : <VideoIcon className="w-3.5 h-3.5" />}
+                                   {activeMeetingCandId === c.id ? 'End Session' : 'Launch Zoom'}
+                                </button>
+                             </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="px-8 py-6">
-                        <div className="flex items-center gap-2 text-slate-600 font-medium text-xs">
-                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                          {candidate.interviewDate}
-                        </div>
-                      </td>
-                      <td className="px-8 py-6 text-center">
-                        <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                          candidate.status === 'INTERVIEWING' ? 'bg-amber-100 text-amber-700' :
-                          candidate.status === 'COMPLETED' ? 'bg-emerald-100 text-emerald-700' :
-                          candidate.status === 'SHORTLISTED' ? 'bg-indigo-100 text-indigo-700' :
-                          candidate.status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'
-                        }`}>{candidate.status}</span>
-                      </td>
-                      <td className="px-8 py-6 text-center text-sm font-black text-slate-900">{candidate.score ? `${candidate.score}%` : '--'}</td>
-                      <td className="px-8 py-6 text-right">
-                        <button 
-                          onClick={() => {
-                            setSelectedCandidate(candidate);
-                            setDetailTab('assessment');
-                          }} 
-                          className="p-3 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-2xl transition-all"
-                        >
-                          <ArrowUpRight className="w-5 h-5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
+                       ))}
+                       {candidates.filter(c => c.status !== 'REJECTED' && c.status !== 'COMPLETED').length === 0 && (
+                         <div className="p-20 text-center text-slate-300 font-black uppercase tracking-widest flex flex-col items-center">
+                            <VideoIcon className="w-12 h-12 mb-4 opacity-20" />
+                            No pending sessions found
+                         </div>
+                       )}
+                    </div>
+                 </div>
+              </div>
+              <div className="space-y-6">
+                 <div className="bg-gradient-to-br from-blue-600 to-blue-800 text-white p-8 rounded-[2.5rem] shadow-xl relative overflow-hidden h-fit">
+                    <div className="absolute top-0 right-0 p-8 opacity-10 rotate-12"><VideoIcon className="w-32 h-32" /></div>
+                    <div className="relative z-10 space-y-6">
+                       <h3 className="text-xl font-black uppercase tracking-tight">Zoom Health</h3>
+                       <div className="space-y-4">
+                          <div className="p-4 bg-white/10 rounded-2xl border border-white/10">
+                             <p className="text-[9px] font-black text-blue-200 uppercase mb-1">Global Load</p>
+                             <p className="text-2xl font-black">{candidates.filter(c => c.activeMeetingRoom).length} / 15</p>
+                          </div>
+                       </div>
+                    </div>
+                 </div>
+              </div>
+           </div>
+        </div>
       )}
 
-      {selectedCandidate && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm animate-in fade-in duration-300 overflow-y-auto">
-          <div className="bg-white w-full max-w-5xl rounded-[3rem] shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in zoom-in-95 duration-300">
-            <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-              <div className="flex items-center gap-6">
-                <div className="w-16 h-16 rounded-[2rem] bg-indigo-600 text-white flex items-center justify-center text-2xl font-black shadow-lg shadow-indigo-600/20">{selectedCandidate.name.charAt(0)}</div>
-                <div>
-                  <h3 className="text-2xl font-black text-slate-900 tracking-tight">{selectedCandidate.name}</h3>
-                  <div className="flex items-center gap-3 mt-1">
-                    <span className="text-xs text-slate-500 font-bold uppercase tracking-widest">{selectedCandidate.role}</span>
-                    <div className="w-1 h-1 rounded-full bg-slate-300" />
-                    <span className="text-xs text-indigo-600 font-bold uppercase tracking-widest">{selectedCandidate.email}</span>
+      {/* 2. Job Board View */}
+      {activeView === 'jobs' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in slide-in-from-bottom-4">
+           <div className="lg:col-span-8 space-y-6">
+              {isAddingJob ? (
+                <section className="bg-white p-8 md:p-12 rounded-[3rem] border border-slate-200 shadow-xl animate-in zoom-in-95 duration-300">
+                  <div className="flex justify-between items-center mb-8">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 ${editingJobId ? 'bg-indigo-600' : isCloning ? 'bg-amber-500' : 'bg-indigo-600'} rounded-xl flex items-center justify-center text-white transition-colors`}>
+                        {editingJobId ? <Edit3 className="w-5 h-5" /> : isCloning ? <Copy className="w-5 h-5" /> : <PlusCircle className="w-5 h-5" />}
+                      </div>
+                      <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">
+                        {editingJobId ? 'Modify Vacancy' : isCloning ? 'Clone Vacancy' : 'New Vacancy'}
+                      </h3>
+                    </div>
+                    <button onClick={() => { setIsAddingJob(false); setEditingJobId(null); setIsCloning(false); }} className="p-3 text-slate-400 hover:bg-slate-50 rounded-xl transition-all"><X /></button>
+                  </div>
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-2 gap-6">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Job Title</label>
+                        <input type="text" value={newJob.title} onChange={e => setNewJob({...newJob, title: e.target.value})} className={`w-full p-4 bg-slate-50 border-2 rounded-2xl font-bold outline-none ${errors.title ? 'border-red-500' : 'border-transparent focus:border-indigo-500'}`} />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Min Experience (Years)</label>
+                        <input type="number" value={newJob.minExperience} onChange={e => setNewJob({...newJob, minExperience: parseInt(e.target.value) || 0})} className="w-full p-4 bg-slate-50 border-none rounded-2xl font-bold" />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">AI Protocol Instruction</label>
+                      <textarea value={newJob.systemPrompt} onChange={e => setNewJob({...newJob, systemPrompt: e.target.value})} className={`w-full h-32 p-4 bg-slate-900 text-indigo-400 border-2 rounded-[2rem] font-mono text-xs outline-none ${errors.systemPrompt ? 'border-red-500' : 'border-transparent focus:border-indigo-500'}`} />
+                    </div>
+                    <button onClick={handleSaveJob} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl flex items-center justify-center gap-2 active:scale-95 transition-all hover:bg-indigo-700">
+                      <Save className="w-4 h-4" /> Save Deployment
+                    </button>
+                  </div>
+                </section>
+              ) : (
+                <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
+                  <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
+                      <h3 className="text-xs font-black uppercase tracking-widest text-slate-900">Active Roles</h3>
+                      <button onClick={startNewVacancy} className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/20">
+                        <Plus className="w-4 h-4" /> Post Vacancy
+                      </button>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                      {jobs.map(job => (
+                        <div key={job.id} className="p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-6 hover:bg-slate-50/50 transition-all group">
+                          <div className="flex items-center gap-6">
+                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg transition-all ${job.status === 'OPEN' ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-400'}`}>
+                              <Briefcase className="w-7 h-7" />
+                            </div>
+                            <div>
+                              <h4 className="font-black text-slate-900 text-lg leading-tight">{job.title}</h4>
+                              <div className="flex items-center gap-3 mt-1.5">
+                                <button 
+                                  onClick={() => toggleJobStatus(job)}
+                                  className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${job.status === 'OPEN' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}
+                                >
+                                  {job.status === 'OPEN' ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                                  {job.status}
+                                </button>
+                                <span className="text-[9px] font-bold text-slate-300 uppercase">Since {new Date(job.createdAt).toLocaleDateString()}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => handleEditJob(job)} className="p-3 bg-white border border-slate-100 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all"><Edit3 className="w-4 h-4" /></button>
+                            <button onClick={() => handleCloneJob(job)} className="p-3 bg-white border border-slate-100 rounded-xl text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-all"><Copy className="w-4 h-4" /></button>
+                            <button onClick={() => deleteJob(job.id)} className="p-3 bg-white border border-slate-100 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all"><Trash2 className="w-4 h-4" /></button>
+                          </div>
+                        </div>
+                      ))}
                   </div>
                 </div>
-              </div>
-              <button onClick={() => { setSelectedCandidate(null); }} className="p-4 bg-white border border-slate-200 rounded-[1.5rem] text-slate-400 hover:text-indigo-600 transition-all shadow-sm"><X className="w-6 h-6" /></button>
-            </div>
+              )}
+           </div>
+           <div className="lg:col-span-4 space-y-6">
+              <section className="bg-indigo-900 text-white p-8 rounded-[3rem] shadow-2xl relative overflow-hidden h-fit border-8 border-white">
+                 <div className="absolute top-0 right-0 p-8 opacity-10"><Zap className="w-32 h-32" /></div>
+                 <h3 className="text-xl font-black uppercase tracking-tight mb-4">Traffic</h3>
+                 <div className="p-5 bg-white/5 rounded-3xl border border-white/10 backdrop-blur-sm">
+                    <div className="flex justify-between text-[10px] font-black uppercase tracking-widest mb-3 text-indigo-200"><span>Global Pipeline</span><span>{candidates.length}</span></div>
+                    <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
+                       <div className="h-full bg-indigo-400 transition-all duration-1000" style={{width: `${Math.min(100, (candidates.length / totalCandidatesCount) * 100)}%`}} />
+                    </div>
+                 </div>
+              </section>
+           </div>
+        </div>
+      )}
 
+      {/* 3. Pipeline View */}
+      {activeView === 'pipeline' && (
+        <div className="bg-white rounded-[3rem] border border-slate-200 overflow-hidden shadow-sm">
+           <div className="p-8 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+             <div className="flex items-center gap-4 flex-1">
+               <div className="relative">
+                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                 <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Search..." className="pl-10 pr-4 py-3 bg-slate-50 border-none rounded-xl text-[10px] font-bold outline-none focus:ring-2 focus:ring-indigo-500 transition-all w-64" />
+               </div>
+               <div className="flex items-center bg-slate-50 rounded-xl px-3 border border-slate-100">
+                 <SortAsc className="w-3.5 h-3.5 text-slate-400 mr-2" />
+                 <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortOption)} className="bg-transparent border-none py-2 text-[10px] font-black uppercase tracking-widest outline-none cursor-pointer">
+                   <option value="date">Date</option>
+                   <option value="matchScore">Match</option>
+                   <option value="score">Rating</option>
+                   <option value="name">Name</option>
+                 </select>
+               </div>
+             </div>
+           </div>
+           <div className="overflow-x-auto">
+             <table className="w-full text-left">
+               <thead>
+                 <tr className="bg-slate-50/50 text-slate-400 text-[10px] font-black uppercase tracking-widest">
+                   <th className="px-8 py-6">Identity</th>
+                   <th className="px-8 py-6 text-center">Status</th>
+                   <th className="px-8 py-6 text-center">Schedule</th>
+                   <th className="px-8 py-6 text-center">Fit Score</th>
+                   <th className="px-8 py-6 text-right">Actions</th>
+                 </tr>
+               </thead>
+               <tbody className="divide-y divide-slate-100">
+                 {filteredCandidates.map(c => (
+                   <tr key={c.id} className="hover:bg-slate-50 transition-all group">
+                     <td className="px-8 py-6">
+                        <div className="flex items-center gap-4">
+                           <div className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-xs">{c.name.charAt(0)}</div>
+                           <div><p className="font-bold text-slate-900 text-sm leading-none">{c.name}</p><p className="text-[10px] text-slate-400 font-bold uppercase mt-1.5">{c.role}</p></div>
+                        </div>
+                     </td>
+                     <td className="px-8 py-6 text-center">
+                        <span className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                          c.status === 'INTERVIEWING' ? 'bg-emerald-50 text-emerald-600 animate-pulse' : 'bg-slate-100 text-slate-400'
+                        }`}>{c.status}</span>
+                     </td>
+                     <td className="px-8 py-6 text-center">
+                        <div className="flex flex-col items-center">
+                          <span className="text-[10px] font-black text-slate-900">{c.interviewDate}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase">{c.interviewTime || 'Awaiting'}</span>
+                        </div>
+                     </td>
+                     <td className="px-8 py-6 text-center font-black text-xs text-indigo-600">{c.matchScore ? `${c.matchScore}%` : '--'}</td>
+                     <td className="px-8 py-6 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                           <button onClick={() => setCandidateToSchedule(c)} className="p-3 text-slate-300 hover:text-blue-600 hover:bg-blue-50 rounded-2xl transition-all"><CalendarPlus className="w-5 h-5" /></button>
+                           <button onClick={() => { setSelectedCandidate(c); setDetailTab('assessment'); }} className="p-3 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-2xl transition-all"><ArrowUpRight className="w-5 h-5" /></button>
+                        </div>
+                     </td>
+                   </tr>
+                 ))}
+               </tbody>
+             </table>
+           </div>
+        </div>
+      )}
+
+      {/* 4. Analytics View */}
+      {activeView === 'reports' && (
+        <div className="animate-in slide-in-from-bottom-4">
+          <ReportingSystem />
+        </div>
+      )}
+
+      {/* QUICK SCHEDULE OVERLAY */}
+      {candidateToSchedule && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm">
+           <div className="bg-white w-full max-w-md rounded-[3rem] shadow-2xl p-10">
+              <div className="flex justify-between items-start mb-8">
+                 <h3 className="text-2xl font-black text-slate-900 tracking-tight">Bridge Scheduling</h3>
+                 <button onClick={() => setCandidateToSchedule(null)} className="p-3 text-slate-300 hover:bg-slate-50 rounded-xl transition-all"><X /></button>
+              </div>
+              <div className="space-y-6">
+                 <input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="w-full bg-slate-50 border-none rounded-2xl p-4 text-sm font-bold outline-none" />
+                 <input type="time" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} className="w-full bg-slate-50 border-none rounded-2xl p-4 text-sm font-bold outline-none" />
+                 <button onClick={handleConfirmSchedule} className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-black text-xs uppercase shadow-xl hover:bg-blue-700 disabled:opacity-50">
+                    {isSchedulingLoading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : 'Confirm Slot'}
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
+
+      {/* Candidate Detail Modal */}
+      {selectedCandidate && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
+          <div className="bg-white w-full max-w-5xl rounded-[3.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+               <div className="flex items-center gap-6">
+                   <div className="w-16 h-16 rounded-[2rem] bg-indigo-600 text-white flex items-center justify-center text-2xl font-black">{selectedCandidate.name.charAt(0)}</div>
+                   <div><h3 className="text-2xl font-black text-slate-900 tracking-tight">{selectedCandidate.name}</h3><p className="text-xs text-indigo-600 font-bold uppercase tracking-widest">{selectedCandidate.role}</p></div>
+               </div>
+               <button onClick={() => setSelectedCandidate(null)} className="p-4 bg-white border border-slate-200 rounded-[1.5rem] text-slate-400 hover:text-red-500 transition-all"><X className="w-6 h-6" /></button>
+            </div>
             <div className="flex border-b border-slate-100 bg-white px-8">
               {[
-                { id: 'assessment', label: 'Assessment', icon: Brain },
-                { id: 'logistics', label: 'Logistics & Board', icon: ClipboardList },
-                { id: 'recording', label: 'Interview Recording', icon: Video },
-                { id: 'cv', label: 'CV & Profile', icon: FileText }
+                { id: 'assessment', label: 'Evaluation', icon: Brain }, 
+                { id: 'live', label: 'Command Deck', icon: Radio },
+                { id: 'oversight', label: 'Room Control', icon: ShieldCheck }
               ].map(tab => (
-                <button
-                  key={tab.id}
-                  onClick={() => setDetailTab(tab.id as any)}
-                  className={`flex items-center gap-2 px-8 py-6 text-[10px] font-black uppercase tracking-[0.2em] transition-all relative ${
-                    detailTab === tab.id ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'
-                  }`}
-                >
-                  <tab.icon className="w-4 h-4" />
-                  {tab.label}
+                <button key={tab.id} onClick={() => setDetailTab(tab.id as any)} className={`px-8 py-6 text-[10px] font-black uppercase tracking-widest transition-all relative ${detailTab === tab.id ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <div className="flex items-center gap-2"><tab.icon className="w-4 h-4" /> {tab.label}</div>
                   {detailTab === tab.id && <div className="absolute bottom-0 left-0 w-full h-1 bg-indigo-600 rounded-t-full" />}
                 </button>
               ))}
             </div>
-
-            <div className="p-10 max-h-[60vh] overflow-y-auto">
-              {detailTab === 'assessment' && (
-                <div className="space-y-10 animate-in fade-in slide-in-from-left-4 duration-500">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <ScoreCard label="AI Match Score" value={selectedCandidate.matchScore || 0} icon={Target} color="indigo" />
-                    <ScoreCard label="Interview Performance" value={selectedCandidate.score || 0} icon={Brain} color="emerald" />
-                  </div>
-
-                  {selectedCandidate.status !== 'PENDING' && selectedCandidate.status !== 'INTERVIEWING' ? (
-                    <section className="space-y-6">
-                      <div className="flex items-center justify-between">
-                         <h4 className="font-black text-slate-900 uppercase text-sm tracking-widest">Final Manager Grade</h4>
-                         {selectedCandidate.managerAssessment && <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-4 py-2 rounded-xl"><UserCheck className="w-4 h-4" /><span className="text-[10px] font-black uppercase tracking-widest">Graded</span></div>}
-                      </div>
-                      <div className="bg-slate-50 p-8 rounded-[2.5rem] border border-slate-100 space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                          <div>
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Overall Rating (0-100)</label>
-                            <input 
-                              type="number"
-                              value={assessment.score}
-                              onChange={(e) => setAssessment({...assessment, score: parseInt(e.target.value)})}
-                              className="w-full bg-white border border-slate-200 rounded-2xl px-5 py-4 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                            />
-                            {gradingErrors.score && <p className="text-[10px] text-red-500 font-bold mt-1 uppercase">{gradingErrors.score}</p>}
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Recommendation</label>
-                            <div className="flex bg-white p-1 rounded-2xl border border-slate-200">
-                                {['HIRE', 'FOLLOW_UP', 'REJECT'].map((rec) => (
-                                  <button
-                                    key={rec}
-                                    onClick={() => setAssessment({...assessment, recommendation: rec as any})}
-                                    className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                                      assessment.recommendation === rec 
-                                      ? (rec === 'HIRE' ? 'bg-emerald-500 text-white shadow-lg' : rec === 'REJECT' ? 'bg-red-500 text-white shadow-lg' : 'bg-indigo-500 text-white shadow-lg')
-                                      : 'text-slate-400 hover:bg-slate-50'
-                                    }`}
-                                  >
-                                    {rec.replace('_', ' ')}
-                                  </button>
-                                ))}
-                            </div>
-                          </div>
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Assessment Feedback</label>
-                          <textarea 
-                            value={assessment.comments}
-                            onChange={(e) => setAssessment({...assessment, comments: e.target.value})}
-                            placeholder="Detail why you've reached this decision..."
-                            className="w-full h-32 bg-white border border-slate-200 rounded-[1.5rem] px-5 py-4 text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                          />
-                          {gradingErrors.comments && <p className="text-[10px] text-red-500 font-bold mt-1 uppercase">{gradingErrors.comments}</p>}
-                        </div>
-                        <button onClick={submitGrading} className="w-full py-5 bg-slate-900 text-white rounded-[1.5rem] font-black text-xs uppercase tracking-[0.2em] shadow-xl hover:bg-slate-800 transition-all active:scale-[0.98]">Update Evaluation Report</button>
-                      </div>
-                    </section>
-                  ) : (
-                    <div className="bg-indigo-50 p-10 rounded-[2.5rem] border border-indigo-100 text-center">
-                      <History className="w-12 h-12 text-indigo-300 mx-auto mb-4" />
-                      <h4 className="text-lg font-black text-indigo-900 uppercase tracking-tight">Interview In Progress</h4>
-                      <p className="text-sm text-indigo-600/80 font-medium max-w-xs mx-auto mt-2">Assessment tools will be fully available once the candidate completes their AI-led session.</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {detailTab === 'logistics' && (
-                <div className="space-y-10 animate-in fade-in slide-in-from-right-4 duration-500">
-                  {/* Interview Schedule Section */}
-                  <section>
-                    <div className="flex items-center gap-3 mb-6">
-                      <Calendar className="w-6 h-6 text-indigo-600" />
-                      <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight">Interview Schedule</h4>
-                    </div>
-                    <div className="bg-slate-50 p-8 rounded-[2.5rem] border border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="p-10 flex-1 overflow-y-auto min-h-[400px]">
+               {detailTab === 'oversight' && (
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                    <div className="space-y-6">
+                       <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest flex items-center gap-2"><DoorOpen className="w-4 h-4 text-indigo-600" /> Requests</h4>
                        <div className="space-y-3">
-                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                           <Calendar className="w-3.5 h-3.5" /> Interview Date
-                         </label>
-                         <input 
-                           type="date" 
-                           value={editDate} 
-                           onChange={(e) => {
-                             setEditDate(e.target.value);
-                             // Auto-save on change for better UX
-                             const updated = { ...selectedCandidate!, interviewDate: e.target.value };
-                             updateCandidate(updated);
-                           }}
-                           className="w-full bg-white border border-slate-200 rounded-2xl px-5 py-4 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                         />
-                       </div>
-                       <div className="space-y-3">
-                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                           <Clock4 className="w-3.5 h-3.5" /> Interview Time
-                         </label>
-                         <input 
-                           type="time" 
-                           value={editTime} 
-                           onChange={(e) => {
-                             setEditTime(e.target.value);
-                             const updated = { ...selectedCandidate!, interviewTime: e.target.value };
-                             updateCandidate(updated);
-                           }}
-                           className="w-full bg-white border border-slate-200 rounded-2xl px-5 py-4 text-sm font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                         />
-                       </div>
-                    </div>
-                  </section>
-
-                  {/* Interview Board Management Section */}
-                  <section>
-                    <div className="flex items-center gap-3 mb-6">
-                      <Users className="w-6 h-6 text-indigo-600" />
-                      <h4 className="text-xl font-black text-slate-900 uppercase tracking-tight">Interview Board</h4>
-                    </div>
-                    <div className="bg-white border border-slate-200 rounded-[2.5rem] p-8 space-y-8 shadow-sm">
-                      <form onSubmit={handleAddBoardMember} className="flex gap-4">
-                        <div className="flex-1 relative">
-                          <UserPlus className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                          <input 
-                            type="text" 
-                            placeholder="Add member (e.g. John Doe, Lead Engineer)"
-                            value={newBoardMember}
-                            onChange={(e) => setNewBoardMember(e.target.value)}
-                            className="w-full pl-12 pr-4 py-4 bg-slate-50 border-none rounded-2xl text-sm font-medium outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                          />
-                        </div>
-                        <button 
-                          type="submit"
-                          className="bg-slate-900 text-white px-8 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all flex items-center gap-2"
-                        >
-                          <Plus className="w-4 h-4" /> Add Member
-                        </button>
-                      </form>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {(selectedCandidate.boardMembers || []).length === 0 ? (
-                          <div className="md:col-span-2 py-10 text-center border-2 border-dashed border-slate-100 rounded-[2rem]">
-                            <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">No board members assigned yet</p>
-                          </div>
-                        ) : (
-                          (selectedCandidate.boardMembers || []).map((member) => (
-                            <div key={member} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 group">
-                              <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-indigo-600 shadow-sm font-black text-xs">
-                                  {member.split(' ').map(n => n[0]).join('')}
-                                </div>
-                                <span className="text-sm font-bold text-slate-900">{member}</span>
-                              </div>
-                              <button 
-                                onClick={() => handleRemoveBoardMember(member)}
-                                className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </section>
-                </div>
-              )}
-
-              {detailTab === 'recording' && (
-                <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-500">
-                  {selectedCandidate.transcript ? (
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-                      <div className="lg:col-span-5 space-y-6">
-                        <div className="aspect-video bg-slate-950 rounded-[2.5rem] relative overflow-hidden group border-8 border-slate-900 shadow-2xl">
-                          <img 
-                            src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=800" 
-                            className={`w-full h-full object-cover transition-opacity duration-500 ${isPlaying ? 'opacity-80 grayscale-0' : 'opacity-60 grayscale'}`} 
-                            alt="Recording Preview"
-                          />
-                          <div className="absolute inset-0 flex items-center justify-center">
-                             <button 
-                               onClick={() => setIsPlaying(!isPlaying)}
-                               className="w-20 h-20 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/30 cursor-pointer hover:scale-110 transition-transform"
-                             >
-                                {isPlaying ? <Pause className="w-8 h-8 fill-current" /> : <Play className="w-8 h-8 fill-current ml-1" />}
-                             </button>
-                          </div>
-                          <div className="absolute bottom-0 left-0 w-full p-6 bg-gradient-to-t from-black to-transparent">
-                             <div className="flex items-center justify-between text-white mb-3">
-                                <span className="text-[10px] font-black uppercase tracking-widest">{isPlaying ? '05:42' : '04:12'} / 12:45</span>
-                                <div className="flex gap-4">
-                                   <Volume2 className="w-4 h-4" />
-                                   <Maximize className="w-4 h-4" />
-                                </div>
-                             </div>
-                             <div className="h-1.5 w-full bg-white/20 rounded-full overflow-hidden">
-                                <div className="h-full bg-indigo-500 rounded-full transition-all duration-500" style={{ width: isPlaying ? '45%' : '35%' }} />
-                             </div>
-                          </div>
-                        </div>
-
-                        <div className="bg-slate-50 p-8 rounded-[2rem] border border-slate-100">
-                           <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4">Metadata</h5>
-                           <div className="space-y-4">
-                              <MetaItem label="Connection Quality" value="Excellent (HD)" />
-                              <MetaItem label="Agent Intelligence" value="Alex v2.5" />
-                              <MetaItem label="Sentiment Analysis" value="Positive/Professional" />
-                              <MetaItem label="Duration" value="12:45" />
-                           </div>
-                        </div>
-                      </div>
-
-                      <div className="lg:col-span-7 flex flex-col h-[500px] bg-white border border-slate-200 rounded-[2.5rem] shadow-sm overflow-hidden">
-                        <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-                           <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Full Session Transcript</span>
-                           <div className="flex gap-3">
-                              <button className="flex items-center gap-2 text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:underline">
-                                 <Download className="w-3.5 h-3.5" /> Export PDF
-                              </button>
-                           </div>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-8 space-y-6">
-                           {selectedCandidate.transcript.split('\n\n').map((block, i) => {
-                             const isAlex = block.startsWith('Interviewer:');
-                             return (
-                               <div key={i} className={`flex ${isAlex ? 'justify-start' : 'justify-end'}`}>
-                                 <div className={`max-w-[85%] p-5 rounded-3xl text-sm font-medium leading-relaxed ${
-                                   isAlex ? 'bg-slate-50 text-slate-700 rounded-bl-none border border-slate-100' : 'bg-indigo-600 text-white rounded-br-none shadow-lg shadow-indigo-600/20'
-                                 }`}>
-                                   <span className={`text-[8px] font-black uppercase block mb-1 opacity-50`}>{isAlex ? 'Alex (AI)' : 'Candidate'}</span>
-                                   {block.replace('Interviewer:', '').replace('Candidate:', '')}
+                          {(selectedCandidate.requestedBoardMembers || []).length === 0 ? (
+                            <div className="p-8 text-center border-2 border-dashed border-slate-100 rounded-2xl text-[9px] font-black uppercase text-slate-300">Queue Empty</div>
+                          ) : (
+                            selectedCandidate.requestedBoardMembers?.map(name => (
+                              <div key={name} className="p-4 bg-indigo-50 border-2 border-indigo-100 rounded-2xl flex items-center justify-between">
+                                 <span className="text-[10px] font-black text-indigo-900 uppercase">{name}</span>
+                                 <div className="flex gap-2">
+                                    <button onClick={() => denyBoardMember(name)} className="p-2 text-red-500 hover:bg-red-100 rounded-lg"><UserX className="w-4 h-4" /></button>
+                                    <button onClick={() => admitBoardMember(name)} className="p-2 bg-indigo-600 text-white rounded-lg"><Check className="w-4 h-4" /></button>
                                  </div>
-                               </div>
-                             );
-                           })}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="py-20 text-center flex flex-col items-center">
-                       <div className="w-20 h-20 bg-slate-100 rounded-[2rem] flex items-center justify-center text-slate-300 mb-6">
-                          <Video className="w-10 h-10" />
-                       </div>
-                       <h4 className="font-black text-slate-300 uppercase tracking-widest">No recordings available yet</h4>
-                       <p className="text-xs text-slate-400 font-medium max-w-xs mt-2">Recordings and transcripts appear once the candidate completes their AI interview.</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {detailTab === 'cv' && (
-                <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-10">
-                    <div className="md:col-span-4 space-y-6">
-                      <div className="bg-slate-950 text-white p-10 rounded-[2.5rem] shadow-2xl relative overflow-hidden group">
-                         <div className="absolute top-0 right-0 p-8 opacity-5"><FileText className="w-32 h-32" /></div>
-                         <h5 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-6">Candidate Resume</h5>
-                         <div className="space-y-6 relative z-10">
-                            <div className="p-4 bg-white/5 rounded-2xl border border-white/10 flex items-center gap-4 group-hover:bg-white/10 transition-all cursor-pointer">
-                               <div className="w-10 h-10 bg-indigo-500 rounded-xl flex items-center justify-center"><Download className="w-5 h-5 text-white" /></div>
-                               <div>
-                                  <p className="text-xs font-black">Main_Resume.pdf</p>
-                                  <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Added {selectedCandidate.interviewDate}</p>
-                               </div>
-                            </div>
-                         </div>
-                         <button 
-                           onClick={toggleCVReviewed}
-                           className={`w-full mt-10 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
-                             selectedCandidate.cvReviewed ? 'bg-emerald-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'
-                           }`}
-                         >
-                           {selectedCandidate.cvReviewed ? <><CheckCircle className="w-4 h-4" /> Marked as Reviewed</> : <><Eye className="w-4 h-4" /> Mark as Reviewed</>}
-                         </button>
-                      </div>
-                      <div className="bg-slate-50 p-8 rounded-[2rem] border border-slate-100">
-                         <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">Education History</h5>
-                         <div className="flex gap-4">
-                            <GraduationCap className="w-10 h-10 text-indigo-600 bg-white p-2 rounded-xl shadow-sm border border-slate-100" />
-                            <div>
-                               <p className="text-sm font-black text-slate-900 leading-none">{selectedCandidate.profile?.education || 'High School'}</p>
-                               <p className="text-[10px] text-slate-400 font-bold uppercase mt-1 tracking-widest">Certified Graduate</p>
-                            </div>
-                         </div>
-                      </div>
-                    </div>
-
-                    <div className="md:col-span-8 space-y-8">
-                      <section>
-                         <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2"><Target className="w-4 h-4" /> Professional Summary</h5>
-                         <div className="bg-white border border-slate-100 p-8 rounded-[2.5rem] shadow-sm leading-relaxed text-slate-600 font-medium text-sm italic">
-                            "{selectedCandidate.profile?.resumeSummary || 'No professional summary provided.'}"
-                         </div>
-                      </section>
-
-                      <section>
-                         <div className="flex justify-between items-center mb-4">
-                           <h5 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2"><Brain className="w-4 h-4" /> Core Competencies</h5>
-                           <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest bg-indigo-50 px-3 py-1 rounded-full">{selectedCandidate.profile?.skills.length || 0} Skills</span>
-                         </div>
-                         <div className="flex flex-wrap gap-3">
-                            {selectedCandidate.profile?.skills.map((skill, i) => (
-                              <div key={skill} className="bg-slate-50 border border-slate-100 px-6 py-3 rounded-2xl flex items-center gap-2 group hover:border-indigo-200 hover:bg-indigo-50 transition-all cursor-default">
-                                <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 group-hover:scale-125 transition-transform" />
-                                <span className="text-xs font-black text-slate-700 uppercase tracking-wider">{skill}</span>
                               </div>
-                            ))}
-                         </div>
-                      </section>
-                      
-                      <section className="bg-indigo-600 p-8 rounded-[2.5rem] text-white shadow-xl shadow-indigo-600/20">
-                         <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center"><Settings2 className="w-6 h-6" /></div>
-                            <div>
-                               <h5 className="text-lg font-black tracking-tight leading-none">Experience Assessment</h5>
-                               <p className="text-xs text-indigo-100 font-medium mt-1">Validated career timeline and tenure fit.</p>
-                            </div>
-                            <div className="ml-auto text-right">
-                               <p className="text-3xl font-black">{selectedCandidate.profile?.experienceYears || 0}<span className="text-sm uppercase tracking-widest ml-1">yrs</span></p>
-                            </div>
-                         </div>
-                      </section>
+                            ))
+                          )}
+                       </div>
+                    </div>
+                    <div className="bg-slate-900 rounded-[2.5rem] p-10 text-white shadow-xl">
+                       <h4 className="text-xs font-black uppercase tracking-widest mb-6 text-indigo-400">Roster</h4>
+                       <div className="space-y-4">
+                          <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                             <div className="flex items-center gap-3"><div className={`w-2 h-2 rounded-full ${selectedCandidate.isManagerJoined ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`} /><span className="text-[10px] font-black">Manager</span></div>
+                             <button onClick={toggleManagerJoin} className="text-[8px] font-black uppercase bg-white/10 px-2 py-1 rounded">{selectedCandidate.isManagerJoined ? 'Leave' : 'Join'}</button>
+                          </div>
+                          {(selectedCandidate.boardMembers || []).map(name => (
+                            <div key={name} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10"><span className="text-[10px] font-black uppercase">{name}</span><div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /></div>
+                          ))}
+                       </div>
+                    </div>
+                 </div>
+               )}
+               {detailTab === 'live' && (
+                 <div className="space-y-8">
+                    <div className="bg-slate-900 rounded-[2.5rem] p-10 text-white relative border-4 border-slate-800 shadow-xl">
+                        <div className="flex items-center justify-between mb-8">
+                           <div className="flex items-center gap-3"><div className={`w-3 h-3 rounded-full ${selectedCandidate.status === 'INTERVIEWING' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-700'}`} /><h4 className="text-xs font-black uppercase tracking-widest">Protocol Stream</h4></div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                           <button onClick={() => handleLiveCommand(selectedCandidate.status === 'INTERVIEWING' ? 'PAUSE' : 'RESUME')} className="py-4 bg-white/5 border border-white/10 rounded-2xl font-black text-[9px] uppercase hover:bg-white/10 transition-all">
+                              {selectedCandidate.status === 'INTERVIEWING' ? 'Pause Agent' : 'Resume Agent'}
+                           </button>
+                           <button onClick={() => handleLiveCommand('STOP')} className="py-4 bg-red-500 text-white rounded-2xl font-black text-[9px] uppercase hover:bg-red-600 shadow-xl">Abort Protocol</button>
+                        </div>
+                        <button onClick={() => startMeeting(selectedCandidate)} className="w-full mt-4 py-6 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase shadow-xl hover:bg-blue-700 flex items-center justify-center gap-2"><VideoIcon className="w-4 h-4" /> Start Direct Zoom Bridge</button>
+                    </div>
+                 </div>
+               )}
+               {detailTab === 'assessment' && (
+                  <div className="space-y-8">
+                    <div className="p-10 bg-indigo-50 border border-indigo-100 rounded-[3rem]">
+                       <h4 className="text-xl font-black text-indigo-900 tracking-tight mb-4">Synthesis</h4>
+                       <p className="text-sm text-indigo-700/80 font-medium leading-relaxed">{selectedCandidate.summary || "Pending final evaluation log..."}</p>
                     </div>
                   </div>
-                </div>
-              )}
+               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* FLOATING ZOOM BRIDGE */}
+      {activeMeetingCandId && (
+        <div className="fixed bottom-6 right-6 w-80 bg-slate-900 rounded-[2.5rem] shadow-2xl border-4 border-slate-800 z-[999] overflow-hidden">
+           <div className="p-4 border-b border-white/5 flex items-center justify-between bg-blue-600/10">
+              <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Active Bridge</span>
+              <button onClick={endMeeting} className="p-1.5 text-slate-400 hover:text-white transition-all"><X className="w-4 h-4" /></button>
+           </div>
+           <div className="aspect-video bg-black relative">
+              {isCameraOff ? <div className="absolute inset-0 flex items-center justify-center bg-slate-800 text-white font-black">Cam Off</div> : <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />}
+           </div>
+           <div className="p-6 flex justify-center gap-4 border-t border-white/5">
+              <button onClick={() => setIsMicMuted(!isMicMuted)} className={`p-3 rounded-2xl ${isMicMuted ? 'bg-red-500 text-white' : 'bg-white/10 text-white'}`}>{isMicMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}</button>
+              <button onClick={() => setIsCameraOff(!isCameraOff)} className={`p-3 rounded-2xl ${isCameraOff ? 'bg-red-500 text-white' : 'bg-white/10 text-white'}`}>{isCameraOff ? <CameraOff className="w-4 h-4" /> : <Camera className="w-4 h-4" />}</button>
+              <button onClick={endMeeting} className="p-3 bg-red-500 text-white rounded-2xl"><PhoneOff className="w-4 h-4" /></button>
+           </div>
         </div>
       )}
     </div>
   );
 };
-
-const StatCard: React.FC<{ icon: React.ReactNode; label: string; value: string; color: string }> = ({ icon, label, value, color }) => (
-  <div className="bg-white p-6 rounded-3xl border border-slate-200 flex items-center space-x-4 shadow-sm">
-    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${color}`}>{icon}</div>
-    <div>
-      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{label}</p>
-      <p className="text-2xl font-black text-slate-900 leading-none mt-1">{value}</p>
-    </div>
-  </div>
-);
-
-const ScoreCard: React.FC<{ label: string; value: number; icon: any; color: 'indigo' | 'emerald' | 'amber' }> = ({ label, value, icon: Icon, color }) => (
-  <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
-    <div className="flex justify-between items-start mb-4">
-      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</span>
-      <Icon className={`w-4 h-4 text-${color}-500`} />
-    </div>
-    <div className="flex items-baseline gap-2">
-      <span className={`text-3xl font-black text-${color}-600`}>{value}</span>
-      <span className="text-[10px] font-black text-slate-300 uppercase">/ 100</span>
-    </div>
-    <div className="mt-4 h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
-      <div className={`h-full bg-${color}-500 rounded-full transition-all duration-1000`} style={{ width: `${value}%` }} />
-    </div>
-  </div>
-);
-
-const MetaItem: React.FC<{ label: string; value: string }> = ({ label, value }) => (
-  <div className="flex justify-between items-center text-[10px] font-black">
-    <span className="text-slate-400 uppercase tracking-widest">{label}</span>
-    <span className="text-slate-900 uppercase tracking-widest text-right">{value}</span>
-  </div>
-);
-
-const GraduationCap = (props: any) => (
-  <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-graduation-cap"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
-);
 
 export default ManagerPanel;

@@ -46,19 +46,30 @@ export const evaluateInterview = async (transcript: string): Promise<InterviewEv
 // Use gemini-3-pro-preview for high-quality analysis of candidate fit.
 export const calculateMatchScore = async (candidate: Candidate, template: JobTemplate): Promise<MatchAnalysis> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  
+  // Enhanced prompt utilizing the new structured fields
   const prompt = `
-    Compare this candidate profile against the job requirements.
+    Perform a precise candidate match analysis against the following job template.
     
-    JOB REQUIREMENTS:
+    JOB TITLE: ${template.title}
+    
+    STRUCTURED REQUIREMENTS:
+    - Required Core Skills: ${template.requiredSkills.join(', ')}
+    - Minimum Experience: ${template.minExperience} years
+    - Education: ${template.educationRequirement}
+    
+    SUPPLEMENTARY REQUIREMENTS:
     ${template.requirements.join('\n')}
     
     CANDIDATE PROFILE:
-    Skills: ${candidate.profile?.skills.join(', ')}
-    Experience: ${candidate.profile?.experienceYears} years
-    Summary: ${candidate.profile?.resumeSummary}
-    Interview Performance Score: ${candidate.score || 'N/A'}
+    - Name: ${candidate.name}
+    - Skills: ${candidate.profile?.skills.join(', ')}
+    - Experience: ${candidate.profile?.experienceYears} years
+    - Education: ${candidate.profile?.education}
+    - Summary: ${candidate.profile?.resumeSummary}
+    - Interview Score: ${candidate.score || 'N/A'}
     
-    Return a detailed matching analysis including individual skill scores and a requirement checklist.
+    Analyze the alignment across skill sets, tenure, and educational background. Be critical and identify clear gaps.
   `;
 
   const response = await ai.models.generateContent({

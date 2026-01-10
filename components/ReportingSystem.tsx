@@ -18,19 +18,23 @@ const ReportingSystem: React.FC = () => {
   useEffect(() => {
     const saved = localStorage.getItem(CANDIDATE_DB_KEY);
     if (saved) {
-      setCandidates(JSON.parse(saved));
+      try {
+        setCandidates(JSON.parse(saved));
+      } catch (e) {
+        setCandidates(INITIAL_CANDIDATES);
+      }
     } else {
       setCandidates(INITIAL_CANDIDATES);
     }
   }, []);
 
   const filteredCandidates = candidates.filter(c => 
-    c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    c.role.toLowerCase().includes(searchTerm.toLowerCase())
+    (c.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
+    (c.role || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const ScoreBadge = ({ score }: { score?: number }) => {
-    if (!score) return <span className="text-slate-300 font-bold">--</span>;
+    if (score === undefined || score === null) return <span className="text-slate-300 font-bold">--</span>;
     const color = score >= 85 ? 'text-emerald-500' : score >= 70 ? 'text-indigo-500' : 'text-amber-500';
     return (
       <div className="flex items-center justify-center gap-2">
@@ -43,7 +47,6 @@ const ReportingSystem: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-      {/* Search & Menu Toggle */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
         <div className="flex bg-slate-50 p-1 rounded-2xl border border-slate-100">
           <button 
@@ -72,11 +75,9 @@ const ReportingSystem: React.FC = () => {
         </div>
       </div>
 
-      {/* Report Tables */}
       <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           {menu === 'talent' ? (
-            /* MENU 1: TALENT PROFILES */
             <table className="w-full text-left">
               <thead>
                 <tr className="bg-slate-50/50 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">
@@ -93,9 +94,9 @@ const ReportingSystem: React.FC = () => {
                   <tr key={c.id} className="hover:bg-slate-50/50 transition-colors group">
                     <td className="px-8 py-6">
                       <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-xs">{c.name.charAt(0)}</div>
+                        <div className="w-10 h-10 rounded-2xl bg-slate-900 text-white flex items-center justify-center font-black text-xs">{c.name ? c.name.charAt(0) : '?'}</div>
                         <div>
-                          <p className="font-black text-slate-900 text-sm">{c.name}</p>
+                          <p className="font-black text-slate-900 text-sm">{c.name || 'Anonymous'}</p>
                           <p className="text-[10px] text-slate-400 font-bold uppercase">{c.email}</p>
                         </div>
                       </div>
@@ -114,10 +115,10 @@ const ReportingSystem: React.FC = () => {
                     </td>
                     <td className="px-8 py-6">
                       <div className="flex flex-wrap gap-1.5 max-w-[200px]">
-                        {c.profile?.skills.slice(0, 3).map(skill => (
+                        {c.profile?.skills?.slice(0, 3).map(skill => (
                           <span key={skill} className="px-2 py-0.5 bg-slate-100 text-[8px] font-black text-slate-500 rounded-md uppercase tracking-wider">{skill}</span>
                         ))}
-                        {(c.profile?.skills.length || 0) > 3 && <span className="text-[8px] text-slate-300 font-black">+{c.profile!.skills.length - 3}</span>}
+                        {(c.profile?.skills?.length || 0) > 3 && <span className="text-[8px] text-slate-300 font-black">+{c.profile!.skills.length - 3}</span>}
                       </div>
                     </td>
                     <td className="px-8 py-6 text-center">
@@ -134,7 +135,6 @@ const ReportingSystem: React.FC = () => {
               </tbody>
             </table>
           ) : (
-            /* MENU 2: STATUS & RESULTS */
             <table className="w-full text-left">
               <thead>
                 <tr className="bg-slate-50/50 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">

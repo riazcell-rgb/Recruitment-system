@@ -2,7 +2,8 @@
 export enum UserRole {
   ADMIN = 'ADMIN',
   MANAGER = 'MANAGER',
-  CANDIDATE = 'CANDIDATE'
+  CANDIDATE = 'CANDIDATE',
+  BOARD_MEMBER = 'BOARD_MEMBER'
 }
 
 export interface User {
@@ -17,6 +18,13 @@ export interface CandidateProfile {
   experienceYears: number;
   education: string;
   resumeSummary: string;
+  alertKeywords?: string[];
+  cvFileName?: string;
+  cvUploadDate?: string;
+  // Extended fields
+  mobile?: string;
+  portfolioUrl?: string;
+  imageUrl?: string;
 }
 
 export interface SkillMatch {
@@ -46,14 +54,20 @@ export interface ManagerAssessment {
   recommendation: 'HIRE' | 'REJECT' | 'FOLLOW_UP';
 }
 
+export interface LiveCommand {
+  type: 'START' | 'STOP' | 'PAUSE' | 'RESUME' | 'PUSH_PROMPT' | 'RECORD_START' | 'RECORD_STOP';
+  payload?: string;
+  timestamp: string;
+}
+
 export interface Candidate {
   id: string;
   name: string;
   email: string;
   role: string;
-  status: 'PENDING' | 'INTERVIEWING' | 'COMPLETED' | 'REJECTED' | 'SHORTLISTED';
-  score?: number; // Interview score (AI)
-  matchScore?: number; // Algorithm matching score
+  status: 'PENDING' | 'INTERVIEWING' | 'PAUSED' | 'COMPLETED' | 'REJECTED' | 'SHORTLISTED';
+  score?: number; 
+  matchScore?: number; 
   matchAnalysis?: MatchAnalysis;
   summary?: string;
   interviewDate: string;
@@ -64,6 +78,11 @@ export interface Candidate {
   managerAssessment?: ManagerAssessment;
   cvReviewed?: boolean;
   boardMembers?: string[];
+  lastCommand?: LiveCommand;
+  isManagerJoined?: boolean;
+  requestedBoardMembers?: string[];
+  activeMeetingRoom?: string;
+  meetingParticipants?: string[];
 }
 
 export interface JobTemplate {
@@ -72,7 +91,14 @@ export interface JobTemplate {
   description: string;
   systemPrompt: string;
   questions: string[];
-  requirements: string[];
+  requirements: string[]; 
+  minExperience: number;
+  requiredSkills: string[];
+  educationRequirement: string;
+  // Metadata for Job Posting System
+  status: 'OPEN' | 'CLOSED' | 'DRAFT';
+  createdAt: string;
+  applicantCount?: number;
 }
 
 export interface ChatMessage {
